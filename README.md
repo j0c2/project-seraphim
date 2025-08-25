@@ -35,6 +35,7 @@ make deploy
 make load-test
 
 👉 View Grafana dashboards at http://localhost:3000 and track SLOs in real time.
+```
 
 ---
 
