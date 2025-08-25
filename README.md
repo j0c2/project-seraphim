@@ -39,7 +39,6 @@ make load-test
 
 ---
 
-📖 About the Name
+## 📖 About the Name
 
-Seraphim is derived from Seraphim — guardians and watchers.
-This project acts as a guardian for AI systems, ensuring reliability, trust, and resilience in production ML.
+Derived from Seraphim — guardians and watchers - this project acts as a guardian for AI systems, ensuring reliability, trust, and resilience in production ML.
