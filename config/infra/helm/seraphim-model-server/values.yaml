@@ -1,0 +1,22 @@
+image:
+  repository: seraphim-model-server
+  tag: dev
+  pullPolicy: IfNotPresent
+replicaCount: 1
+service:
+  type: ClusterIP
+  ports:
+    inference: 8080
+    management: 8081
+    metrics: 8082
+# Environment variables for the model server container
+env:
+  SAMPLE_MODEL: "true"
+  SAMPLE_MODEL_VERSIONS: "1.0,2.0"
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 4Gi

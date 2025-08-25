@@ -1,0 +1,5 @@
+apiVersion: v2
+name: seraphim-model-server
+version: 0.1.0
+appVersion: "0.1.0"
+description: TorchServe model server for Project-Seraphim

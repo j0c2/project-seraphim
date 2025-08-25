@@ -13,6 +13,21 @@ resources:
 service:
   type: ClusterIP
   port: 80
+# Environment variables injected into the inference gateway
+# These defaults wire the gateway to the TorchServe service in-cluster
+env:
+  TS_URL: "http://seraphim-model-server:8080"
+  # Baseline model is the stable one
+  MODEL_NAME_BASELINE: "custom-text"
+  MODEL_VERSION_BASELINE: "1.0"
+  # Candidate can be the same name with a new version
+  MODEL_NAME_CANDIDATE: "custom-text"
+  MODEL_VERSION_CANDIDATE: "2.0"
+  # 10% of traffic goes to candidate by default
+  CANARY_PERCENT: "10"
+  CANARY_STICKY_HEADER: "X-User-Id"
+  CANARY_STICKY_SALT: "seraphim"
+  TS_TIMEOUT_MS: "500"
 hpa:
   enabled: true
   minReplicas: 2

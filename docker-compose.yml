@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  model-server:
+    build:
+      context: ./services/model-server
+      platforms:
+        - linux/amd64
+    image: seraphim-model-server:dev
+    platform: linux/amd64
+    environment:
+      SAMPLE_MODEL: "true"
+      SAMPLE_MODEL_VERSIONS: "1.0,2.0"
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "8082:8082"
+
+  inference:
+    build:
+      context: ./services/inference
+    image: seraphim-inference:dev
+    environment:
+      TS_URL: http://model-server:8080
+      MODEL_NAME_BASELINE: custom-text
+      MODEL_VERSION_BASELINE: "1.0"
+      MODEL_NAME_CANDIDATE: custom-text
+      MODEL_VERSION_CANDIDATE: "2.0"
+      CANARY_PERCENT: "10"
+      CANARY_STICKY_HEADER: X-User-Id
+      CANARY_STICKY_SALT: seraphim
+      TS_TIMEOUT_MS: "500"
+    ports:
+      - "8088:8080"
+    depends_on:
+      - model-server

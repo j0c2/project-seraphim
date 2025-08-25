@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seraphim-model-server
+  labels:
+    app: seraphim-model-server
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: seraphim-model-server
+  template:
+    metadata:
+      labels:
+        app: seraphim-model-server
+    spec:
+      containers:
+        - name: torchserve
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+{{- if .Values.env }}
+{{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+{{- end }}
+{{- end }}
+          ports:
+            - containerPort: {{ .Values.service.ports.inference }}
+            - containerPort: {{ .Values.service.ports.management }}
+            - containerPort: {{ .Values.service.ports.metrics }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seraphim-model-server
+spec:
+  selector:
+    app: seraphim-model-server
+  type: {{ .Values.service.type }}
+  ports:
+    - name: inference
+      port: {{ .Values.service.ports.inference }}
+      targetPort: {{ .Values.service.ports.inference }}
+    - name: management
+      port: {{ .Values.service.ports.management }}
+      targetPort: {{ .Values.service.ports.management }}
+    - name: metrics
+      port: {{ .Values.service.ports.metrics }}
+      targetPort: {{ .Values.service.ports.metrics }}

@@ -18,6 +18,13 @@ spec:
         - name: app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+{{- if .Values.env }}
+{{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+{{- end }}
+{{- end }}
           ports:
             - containerPort: 8080
           readinessProbe:
