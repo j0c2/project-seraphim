@@ -1,0 +1,7 @@
+pytest
+numpy
+locust
+black
+isort
+flake8
+

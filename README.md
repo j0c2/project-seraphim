@@ -1,7 +1,7 @@
 # 🛡️ Project-Seraphim
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CI/CD](https://github.com/yourhandle/project-seriphim/actions/workflows/ci.yml/badge.svg)](https://github.com/yourhandle/project-seriphim/actions)
+[![CI/CD](https://github.com/yourhandle/project-seraphim/actions/workflows/ci.yml/badge.svg)](https://github.com/yourhandle/project-seraphim/actions)
 [![Made with Python](https://img.shields.io/badge/Python-3.10+-yellow.svg)](https://www.python.org/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.29+-brightgreen.svg)](https://kubernetes.io/)
 
@@ -22,8 +22,8 @@ It demonstrates how to run ML/LLM inference with production-grade guardrails:
 
 ```bash
 # Clone repo
-git clone https://github.com/yourhandle/project-seriphim.git
-cd project-seriphim
+git clone https://github.com/yourhandle/project-seraphim.git
+cd project-seraphim
 
 # Bootstrap cluster + observability stack
 make infra-apply
