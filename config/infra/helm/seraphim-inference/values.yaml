@@ -1,0 +1,20 @@
+image:
+  repository: seraphim-inference
+  tag: dev
+  pullPolicy: IfNotPresent
+replicaCount: 2
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+service:
+  type: ClusterIP
+  port: 80
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70

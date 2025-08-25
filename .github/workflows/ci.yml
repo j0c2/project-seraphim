@@ -1,0 +1,21 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r services/inference/requirements.txt
+      - run: pytest -q tests/unit
+      - name: Docker build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/inference
+          push: false
+          tags: seraphim-inference:ci

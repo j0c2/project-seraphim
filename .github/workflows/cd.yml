@@ -1,0 +1,23 @@
+name: CD
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Helm Lint
+        run: helm lint config/infra/helm/seraphim-inference
+      - name: Package Chart
+        run: helm package config/infra/helm/seraphim-inference -d dist
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: dist/*.tgz

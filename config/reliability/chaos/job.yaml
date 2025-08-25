@@ -1,0 +1,19 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seraphim-latency-injector
+spec:
+  schedule: "*/10 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: injector
+              image: busybox
+              command: ["/bin/sh","-c"]
+              args:
+                - |
+                  echo "Injecting latency via iptables... (placeholder)";
+                  sleep 5
+          restartPolicy: OnFailure

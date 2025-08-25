@@ -1,0 +1,10 @@
+{
+  "title": "Seraphim Inference Overview",
+  "schemaVersion": 36,
+  "version": 1,
+  "panels": [
+    {"type": "stat", "title": "RPS", "id": 1},
+    {"type": "stat", "title": "Error %", "id": 2},
+    {"type": "graph", "title": "Latency (p95)", "id": 3}
+  ]
+}

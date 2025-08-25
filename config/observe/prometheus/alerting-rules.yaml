@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: seraphim-alerts
+spec:
+  groups:
+    - name: seraphim.slo
+      rules:
+        - alert: SeraphimHighErrorRate
+          expr: sum(rate(http_requests_total{status=~"5..",app="seraphim-inference"}[5m]))
+                / sum(rate(http_requests_total{app="seraphim-inference"}[5m])) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High 5xx error rate"
+        - alert: SeraphimHighLatencyP95
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app="seraphim-inference"}[5m])) by (le)) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "P95 latency above 100ms"

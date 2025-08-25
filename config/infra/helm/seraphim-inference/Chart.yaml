@@ -1,0 +1,5 @@
+apiVersion: v2
+name: seraphim-inference
+version: 0.1.0
+appVersion: "0.1.0"
+description: Inference service with SLOs for Project-Seraphim

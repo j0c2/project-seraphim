@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+.env
+.mypy_cache/
+.pytest_cache/
+
+# Node / UI
+node_modules/
+dist/
+.next/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Helm
+*.tgz
+
+# Docker
+*.pid
+
+# Data / Models
+models/
+checkpoints/
+data/
+*.pt
+*.onnx
+*.h5
+
+# Logs / Misc
+logs/
+*.log
+.DS_Store
