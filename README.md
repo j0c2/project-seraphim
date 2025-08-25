@@ -18,39 +18,6 @@ It demonstrates how to run ML/LLM inference with production-grade guardrails:
 
 ---
 
-**Monorepo Layout**
-
-project-seraphim/
-├─ .github/                 # workflows: build, test, image, helm release
-│   └─ workflows/
-│       ├─ ci.yml
-│       ├─ cd.yml
-│       └─ lint.yml
-├─ config/
-│   ├─ infra/
-│   │   ├─ helm/            # charts for services + obs stack
-│   │   └─ terraform/       # cluster, node pools (CPU/GPU), IAM, secrets
-│   ├─ observe/
-│   │   ├─ prometheus/      # rules, recording rules, Alertmanager
-│   │   └─ grafana/         # dashboards: latency, errors, saturation, drift
-│   └─ reliability/
-│       ├─ drift/           # embedding + distribution drift detectors
-│       ├─ canary/          # canary evaluator + rollout/rollback logic
-│       └─ chaos/           # failure injection jobs
-├─ deploy/
-│   ├─ environment/         # dev/stage/prod overlays
-│   └─ k8s/                 # manifests if you prefer raw YAML
-├─ docs/
-│   └─ playbooks/           # runbooks: pager, rollback, drift response
-├─ services/
-│   ├─ inference/           # FastAPI/gRPC gateway, request validation, auth
-│   └─ model-server/        # TorchServe/Triton configs, model bundles
-├─ tests/
-│   ├─ e2e/                 # k6/Locust load + SLO verification
-│   └─ unit/                # API + detectors
-
----
-
 ## 🚀 Quick Start
 
 ```bash
