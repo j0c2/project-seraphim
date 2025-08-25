@@ -1,7 +1,20 @@
-pytest
+# Development and test dependencies for project-seraphim
+# Include service runtime deps so tests have uvicorn, fastapi, etc.
+-r services/inference/requirements.txt
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-cov>=5.0
+
+# Load/E2E testing
+locust>=2.25
+
+# Linting/formatting
+black>=24.0
+isort>=5.12
+flake8>=6.1
+
+# Misc
 numpy
-locust
-black
-isort
-flake8
 
