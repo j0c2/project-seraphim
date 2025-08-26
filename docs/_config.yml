@@ -13,7 +13,6 @@ url: "https://j0c2.github.io"
 baseurl: "/project-seraphim"
 
 # Theme
-theme: jekyll-theme-chirpy
 remote_theme: cotes2020/jekyll-theme-chirpy
 
 # GitHub repository info
@@ -52,12 +51,11 @@ social:
 #   goatcounter:
 #     id: your-site-name
 
-# Plugins
+# Plugins (GitHub Pages supported only)
 plugins:
   - jekyll-feed
   - jekyll-sitemap
   - jekyll-seo-tag
-  - jekyll-archives
   - jekyll-paginate
   - jekyll-redirect-from
   - jekyll-default-layout
@@ -68,13 +66,7 @@ plugins:
   - jekyll-gist
   - jekyll-github-metadata
 
-# Jekyll Archives
-archives:
-  enabled: [categories, tags]
-  layout: archive
-  permalinks:
-    category: '/categories/:name/'
-    tag: '/tags/:name/'
+# Note: Jekyll Archives plugin is not supported by GitHub Pages
 
 # Pagination
 paginate: 10
@@ -146,26 +138,11 @@ comments:
     lang:
     reactions_enabled:
 
-# Search
-search:
-  enabled: true
-  provider: lunr
-
 # Math equations
 math: false
 
 # Mermaid diagrams
 mermaid: true
-
-# Image optimization
-img_cdn:
-
-# Compress HTML
-compress_html:
-  clippings: all
-  comments: all
-  endings: all
-  startings: [html, head, body]
 
 # Exclude from processing
 exclude:
