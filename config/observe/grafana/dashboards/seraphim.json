@@ -74,6 +74,57 @@
         "defaults": {"unit": "req/s", "decimals": 2},
         "overrides": []
       }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by Outcome (1m)",
+      "id": 5,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(seraphim_inference_requests_total[1m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "req/s", "decimals": 2},
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "TorchServe Inference RPS (1m)",
+      "id": 6,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(ts_inference_requests_total[1m]))",
+          "legendFormat": "ts rps"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "req/s", "decimals": 2},
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Rate by Outcome (5m)",
+      "id": 7,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "(sum by (outcome) (rate(seraphim_inference_requests_total{outcome!=\\\"success\\\"}[5m])) / sum(rate(seraphim_inference_requests_total[5m]))) * 100",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percent", "decimals": 2},
+        "overrides": []
+      }
     }
   ]
 }
