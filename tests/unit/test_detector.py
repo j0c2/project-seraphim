@@ -1,7 +1,6 @@
 import numpy as np
 
-from config.reliability.drift.detector import (cosine_distance,
-                                               is_drifted_cosine)
+from config.reliability.drift.detector import cosine_distance, is_drifted_cosine
 
 
 def test_cosine_distance_bounds():
