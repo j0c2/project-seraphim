@@ -2,9 +2,78 @@
   "title": "Seraphim Inference Overview",
   "schemaVersion": 36,
   "version": 1,
+  "time": {"from": "now-30m", "to": "now"},
+  "refresh": "10s",
   "panels": [
-    {"type": "stat", "title": "RPS", "id": 1},
-    {"type": "stat", "title": "Error %", "id": 2},
-    {"type": "graph", "title": "Latency (p95)", "id": 3}
+    {
+      "type": "stat",
+      "title": "RPS (1m)",
+      "id": 1,
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(seraphim_inference_requests_total[1m]))",
+          "legendFormat": "rps"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "req/s", "decimals": 2},
+        "overrides": []
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Error % (5m)",
+      "id": 2,
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "(sum(rate(seraphim_inference_requests_total{outcome!=\"success\"}[5m])) / sum(rate(seraphim_inference_requests_total[5m]))) * 100",
+          "legendFormat": "error%"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percent", "decimals": 2},
+        "overrides": []
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency p95 (ms)",
+      "id": 3,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(seraphim_inference_latency_seconds_bucket[5m]))) * 1000",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "ms", "decimals": 1},
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by Variant (1m)",
+      "id": 4,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum by (variant) (rate(seraphim_inference_requests_total[1m]))",
+          "legendFormat": "{{variant}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "req/s", "decimals": 2},
+        "overrides": []
+      }
+    }
   ]
 }
