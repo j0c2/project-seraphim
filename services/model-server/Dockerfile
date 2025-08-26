@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
 WORKDIR /home/model-server
 # Bring in handler code and config
 COPY handlers/ /home/model-server/handlers/
-COPY config.properties /home/model-server/config.properties
+COPY ts-config.properties /home/model-server/config.properties
 COPY scripts/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
 RUN mkdir -p /home/model-server/model-store

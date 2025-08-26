@@ -12,9 +12,9 @@ services:
       SAMPLE_MODEL: "true"
       SAMPLE_MODEL_VERSIONS: "1.0,2.0"
     ports:
-      - "8080:8080"
-      - "8081:8081"
-      - "8082:8082"
+      - "9080:8080"
+      - "9081:8081"
+      - "9082:8082"
 
   inference:
     build:

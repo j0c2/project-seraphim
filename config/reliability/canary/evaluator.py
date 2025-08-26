@@ -2,18 +2,19 @@
 Criteria: latency p95, error rate, optional accuracy proxy.
 """
 from dataclasses import dataclass
+from typing import Optional
 
 @dataclass
 class Metrics:
     p95_latency_ms: float
     error_rate: float
-    score: float | None = None  # optional accuracy proxy
+    score: Optional[float] = None  # optional accuracy proxy
 
 
 def passes_canary(baseline: Metrics, candidate: Metrics,
                   max_latency_regress_ms: float = 25,
                   max_error_regress: float = 0.005,
-                  min_score_delta: float | None = None) -> bool:
+                  min_score_delta: Optional[float] = None) -> bool:
     if candidate.p95_latency_ms > baseline.p95_latency_ms + max_latency_regress_ms:
         return False
     if candidate.error_rate > baseline.error_rate + max_error_regress:
