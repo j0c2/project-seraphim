@@ -1,8 +1,7 @@
 ---
-layout: default
-title: Observability Guide
-description: Comprehensive monitoring, metrics, and dashboard setup for Project Seraphim
-nav_order: 2
+title: Observability
+icon: fas fa-chart-line
+order: 2
 ---
 
 # Observability Guide
@@ -20,7 +19,7 @@ This guide explains the local observability stack (Prometheus + Grafana), the me
     - seraphim_inference_latency_seconds_bucket/sum/count{variant}
 - TorchServe (services/model-server)
   - Metrics endpoint at 9082/metrics (Prometheus format enabled)
-  - Note: depending on the upstream image, some named metrics may be sparse; health still shows “up” in Prometheus
+  - Note: depending on the upstream image, some named metrics may be sparse; health still shows "up" in Prometheus
 - Prometheus (config/observe/prometheus)
   - Scrapes the gateway and TorchServe endpoints
 - Grafana (config/observe/grafana)
@@ -54,7 +53,7 @@ for i in {1..100}; do \
 done
 ```
 
-Open Grafana at http://localhost:3000 and select the “Seraphim Inference Overview” dashboard.
+Open Grafana at http://localhost:3000 and select the "Seraphim Inference Overview" dashboard.
 
 ## PromQL Cookbook
 
@@ -116,9 +115,9 @@ Panels use the PromQL queries listed above. You can customize the dashboard in G
 
 ## Troubleshooting
 
-- “No data” in Grafana
+- "No data" in Grafana
   - Ensure you sent traffic to /predict; without traffic, only default Python/process metrics are present
-  - Confirm Prometheus targets are “up”: http://localhost:9090 -> Status -> Targets
+  - Confirm Prometheus targets are "up": http://localhost:9090 -> Status -> Targets
 - TorchServe metrics empty
   - The endpoint may respond 200 but not emit named series in some images/configs
   - Metric job health still shows up; rely on gateway metrics for most views
@@ -132,7 +131,7 @@ Panels use the PromQL queries listed above. You can customize the dashboard in G
 ## Kubernetes Notes
 
 - Charts for gateway and TorchServe are at config/infra/helm
-- For Prometheus/Grafana in-cluster, consider kube-prometheus-stack or your organization’s stack
+- For Prometheus/Grafana in-cluster, consider kube-prometheus-stack or your organization's stack
 - Gateway env variables are configured via Helm values (see values.yaml)
 - Multi-arch clusters: you can use nodeSelector to schedule TorchServe on amd64 nodes if needed
 
@@ -169,7 +168,7 @@ groups:
 
 ## Security & Production Considerations
 
-- Don’t expose Prometheus and Grafana publicly without authentication
+- Don't expose Prometheus and Grafana publicly without authentication
 - Configure Grafana auth and SSL when deploying outside local dev
 - Use scrape labels and relabeling if you add more services
 - Consider remote_write to a centralized Prometheus/TSDB if needed

@@ -1,9 +1,10 @@
 ---
-layout: default
+layout: post
 title: Rollback Playbook
-description: Safe model rollback strategies for Project Seraphim
-parent: Playbooks
-nav_order: 1
+date: 2024-08-26 12:00:00 +0000
+categories: [Operations, Playbooks]
+tags: [rollback, deployment, operations]
+pin: true
 ---
 
 # Rollback Playbook

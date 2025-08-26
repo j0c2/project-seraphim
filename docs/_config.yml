@@ -1,71 +1,190 @@
-# GitHub Pages Jekyll Configuration for Project Seraphim
+# Jekyll Theme Chirpy Configuration for Project Seraphim
 
-title: "Project Seraphim"
-description: "AI Reliability Engineering Platform - Production-grade ML inference with guardrails"
+# Site Settings
+title: Project Seraphim
+tagline: AI Reliability Engineering Platform
+description: >-
+  Production-grade ML inference with guardrails.
+  Demonstrates SLO enforcement, canary deployments, drift detection,
+  auto-scaling, and failure injection for reliable AI systems.
+
+# Site URL
 url: "https://j0c2.github.io"
 baseurl: "/project-seraphim"
 
 # Theme
-theme: minima
-remote_theme: pages-themes/cayman@v0.2.0
+theme: jekyll-theme-chirpy
+remote_theme: cotes2020/jekyll-theme-chirpy
+
+# GitHub repository info
+repository: "j0c2/project-seraphim"
+
+# Author and social
+author:
+  name: Project Seraphim
+  email: contact@example.com
+  links:
+    - https://github.com/j0c2/project-seraphim
+
+github:
+  username: j0c2
+
+social:
+  name: Project Seraphim
+  email: contact@example.com
+  links:
+    - https://github.com/j0c2/project-seraphim
+
+# Site verification (optional)
+# google_site_verification:
+# bing_site_verification:
+# alexa_site_verification:
+# yandex_site_verification:
+# naver_site_verification:
+
+# Analytics (optional)
+# google_analytics:
+#   id: G-XXXXXXXXXX
+
+# Page views (optional)
+# pageviews:
+#   provider: goatcounter
+#   goatcounter:
+#     id: your-site-name
 
 # Plugins
 plugins:
   - jekyll-feed
   - jekyll-sitemap
   - jekyll-seo-tag
+  - jekyll-archives
+  - jekyll-paginate
+  - jekyll-redirect-from
+  - jekyll-default-layout
+  - jekyll-titles-from-headings
+  - jekyll-optional-front-matter
+  - jekyll-readme-index
+  - jekyll-relative-links
+  - jekyll-gist
+  - jekyll-github-metadata
 
-# Markdown settings
+# Jekyll Archives
+archives:
+  enabled: [categories, tags]
+  layout: archive
+  permalinks:
+    category: '/categories/:name/'
+    tag: '/tags/:name/'
+
+# Pagination
+paginate: 10
+paginate_path: '/posts/page:num/'
+
+# Collections
+collections:
+  tabs:
+    output: true
+    sort_by: order
+  playbooks:
+    output: true
+    permalink: /:collection/:name/
+
+# Markdown and syntax highlighting
 markdown: kramdown
 kramdown:
   input: GFM
   syntax_highlighter: rouge
   syntax_highlighter_opts:
-    css_class: 'highlight'
+    css_class: highlight
+    span:
+      line_numbers: false
+    block:
+      line_numbers: true
+      start_line: 1
 
 # Build settings
 safe: true
 incremental: false
+future: false
+plugin_dir: _plugins
+permalink: date
+timezone: UTC
 
-# Collections
-collections:
-  playbooks:
-    output: true
-    permalink: /:collection/:name/
+# SEO and language
+lang: en
 
-# Navigation (if theme supports it)
-navigation:
-  - title: "Home"
-    url: /
-  - title: "Observability"
-    url: /observability
-  - title: "Operations"
-    url: /operations
-  - title: "Playbooks"
-    url: /playbooks/
+# Theme settings
+theme_mode: # [light | dark]
 
-# GitHub repository info
-repository: "j0c2/project-seraphim"
+# CDN endpoint for media files
+cdn:
 
-# Social links
-author:
-  name: "Project Seraphim"
-  github: "j0c2"
+# The favicon for the site, supports multiple sizes
+favicon: /assets/img/favicons/
 
-# SEO
-lang: en-US
+# Avatar (author profile picture)
+avatar: /assets/img/commons/avatar.jpg
 
-# Exclude files from processing
+# TOC (Table of Contents)
+toc: true
+
+# Comments
+comments:
+  provider: # [disqus | utterances | giscus]
+  disqus:
+    shortname:
+  utterances:
+    repo:
+    issue_term:
+  giscus:
+    repo:
+    repo_id:
+    category:
+    category_id:
+    mapping:
+    input_position:
+    lang:
+    reactions_enabled:
+
+# Search
+search:
+  enabled: true
+  provider: lunr
+
+# Math equations
+math: false
+
+# Mermaid diagrams
+mermaid: true
+
+# Image optimization
+img_cdn:
+
+# Compress HTML
+compress_html:
+  clippings: all
+  comments: all
+  endings: all
+  startings: [html, head, body]
+
+# Exclude from processing
 exclude:
-  - .gitignore
+  - '*.gem'
+  - '*.gemspec'
+  - docs/
+  - tools/
   - README.md
-  - Gemfile
-  - Gemfile.lock
-  - node_modules
+  - CHANGELOG.md
+  - LICENSE
+  - rollup.config.js
+  - package*.json
+  - node_modules/
   - vendor/
 
-# Include files
+# Include
 include:
   - _pages
-  - _layouts
-  - _includes
+
+# Sass/SCSS
+sass:
+  style: compressed

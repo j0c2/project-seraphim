@@ -1,22 +1,12 @@
 ---
-layout: default
-title: Home
-description: AI Reliability Engineering Platform - Production-grade ML inference with guardrails
-nav_order: 1
+# the default layout is 'page'
+icon: fas fa-home
+order: 1
 ---
 
-# 🛡️ Project Seraphim Documentation
+# 🛡️ Project Seraphim
 
-Welcome to the **Project Seraphim** documentation site. This is an AI reliability engineering platform that demonstrates how to run ML/LLM inference with production-grade guardrails.
-
-## 📚 Documentation
-
-### Core Guides
-- **[Observability Guide](observability.md)** - Comprehensive monitoring, metrics, and dashboard setup
-- **[Operations Guide](operations.md)** - Deployment, troubleshooting, and maintenance procedures
-
-### Operational Playbooks
-- **[Rollback Procedures](playbooks/rollback.md)** - Safe model rollback strategies
+Welcome to **Project Seraphim**, an AI reliability engineering platform that demonstrates how to run ML/LLM inference with production-grade guardrails.
 
 ## 🚀 Quick Start
 
@@ -33,6 +23,16 @@ curl http://localhost:8000/health
 ```
 
 ## 🏗️ Architecture Overview
+
+```mermaid
+graph TB
+    Client[Client] --> GW[FastAPI Gateway]
+    GW --> |90%| TS1[TorchServe v1.0]
+    GW --> |10%| TS2[TorchServe v2.0]
+    GW --> Metrics[Prometheus]
+    Metrics --> Grafana
+    GW -.Fallback.-> Cache[Fallback Logic]
+```
 
 Project Seraphim provides:
 
