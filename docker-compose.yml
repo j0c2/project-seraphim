@@ -34,3 +34,31 @@ services:
       - "8088:8080"
     depends_on:
       - model-server
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./config/observe/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/observe/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - inference
+      - model-server
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./config/observe/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/observe/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/observe/grafana/dashboards:/etc/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

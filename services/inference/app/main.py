@@ -7,7 +7,9 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
+from prometheus_client import (CONTENT_TYPE_LATEST, Counter, Histogram,
+                               generate_latest)
 from pydantic import BaseModel, Field
 
 # Configure logging
@@ -47,6 +49,18 @@ class PredictResponse(BaseModel):
 
 
 MODEL_VERSION = "v0"
+
+# Prometheus metrics
+REQUEST_COUNT = Counter(
+    "seraphim_inference_requests_total",
+    "Total number of inference requests",
+    labelnames=["variant", "outcome"],
+)
+LATENCY_HIST = Histogram(
+    "seraphim_inference_latency_seconds",
+    "Inference latency in seconds",
+    labelnames=["variant"],
+)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -95,6 +109,12 @@ def _choose_variant(
 def health() -> Dict[str, Any]:
     """Health check endpoint for Kubernetes probes."""
     return {"ok": True, "version": MODEL_VERSION}
+
+
+@app.get("/metrics", tags=["metrics"])
+def metrics() -> Response:
+    payload = generate_latest()
+    return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/readyz", tags=["health"])
@@ -175,22 +195,29 @@ async def predict(req: PredictRequest, request: Request) -> PredictResponse:
                 pred = response.text.strip()
 
             logger.info(f"Successfully got prediction from {used_variant.value}")
+            REQUEST_COUNT.labels(variant=used_variant.value, outcome="success").inc()
 
     except httpx.TimeoutException as e:
         logger.warning(f"Timeout calling {url}: {e}")
         # Fallback to dummy prediction
         pred = "positive" if (len(req.text) % 2 == 0) else "negative"
         logger.info("Using fallback prediction due to timeout")
+        REQUEST_COUNT.labels(variant=used_variant.value, outcome="timeout").inc()
     except httpx.HTTPStatusError as e:
         logger.warning(f"HTTP error from {url}: {e.response.status_code}")
         # Fallback to dummy prediction
         pred = "positive" if (len(req.text) % 2 == 0) else "negative"
         logger.info("Using fallback prediction due to HTTP error")
+        REQUEST_COUNT.labels(variant=used_variant.value, outcome="http_error").inc()
     except Exception as e:
         logger.error(f"Unexpected error calling {url}: {e}")
         # Fallback to dummy prediction
         pred = "positive" if (len(req.text) % 2 == 0) else "negative"
         logger.info("Using fallback prediction due to error")
+        REQUEST_COUNT.labels(variant=used_variant.value, outcome="error").inc()
+
+    # Observe latency
+    LATENCY_HIST.labels(variant=used_variant.value).observe(time.time() - start)
 
     return PredictResponse(
         prediction=pred,
