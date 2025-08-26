@@ -65,6 +65,8 @@ plugins:
   - jekyll-relative-links
   - jekyll-gist
   - jekyll-github-metadata
+  - jekyll-remote-theme
+  - jekyll-include-cache
 
 # Note: Jekyll Archives plugin is not supported by GitHub Pages
 
