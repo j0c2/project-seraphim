@@ -1,4 +1,4 @@
-# 🛡️ Project-Seraphim
+# 🛡️ Project Seraphim
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI/CD](https://github.com/yourhandle/project-seraphim/actions/workflows/ci.yml/badge.svg)](https://github.com/yourhandle/project-seraphim/actions)
