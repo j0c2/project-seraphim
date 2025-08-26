@@ -13,7 +13,7 @@ url: "https://j0c2.github.io"
 baseurl: "/project-seraphim"
 
 # Theme
-remote_theme: cotes2020/jekyll-theme-chirpy@v4.6.0
+remote_theme: cotes2020/jekyll-theme-chirpy@v6.5.5
 
 # GitHub repository info
 repository: "j0c2/project-seraphim"

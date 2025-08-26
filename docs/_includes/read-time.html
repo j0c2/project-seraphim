@@ -14,20 +14,22 @@
   {% assign read_time = min_time %}
 {% endunless %}
 
+{% assign loc_lang = include.lang | default: page.lang | default: site.lang | default: 'en' %}
+
 {% capture read_prompt %}
-  {{- site.data.locales[include.lang].post.read_time.prompt -}}
+  {{- site.data.locales[loc_lang].post.read_time.prompt -}}
 {% endcapture %}
 
 <span
   class="readtime"
   data-bs-toggle="tooltip"
   data-bs-placement="bottom"
-  title="{{ words }} {{ site.data.locales[include.lang].post.words }}"
+  title="{{ words }} {{ site.data.locales[loc_lang].post.words }}"
 >
   <em>
     {{- read_time -}}
     {{ ' ' }}
-    {{- site.data.locales[include.lang].post.read_time.unit -}}
+    {{- site.data.locales[loc_lang].post.read_time.unit -}}
   </em>
   {%- if include.prompt -%}
     {%- assign _prompt_words = read_prompt | strip_html | number_of_words -%}
