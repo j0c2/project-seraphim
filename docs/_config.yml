@@ -1,0 +1,71 @@
+# GitHub Pages Jekyll Configuration for Project Seraphim
+
+title: "Project Seraphim"
+description: "AI Reliability Engineering Platform - Production-grade ML inference with guardrails"
+url: "https://j0c2.github.io"
+baseurl: "/project-seraphim"
+
+# Theme
+theme: minima
+remote_theme: pages-themes/cayman@v0.2.0
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-sitemap
+  - jekyll-seo-tag
+
+# Markdown settings
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    css_class: 'highlight'
+
+# Build settings
+safe: true
+incremental: false
+
+# Collections
+collections:
+  playbooks:
+    output: true
+    permalink: /:collection/:name/
+
+# Navigation (if theme supports it)
+navigation:
+  - title: "Home"
+    url: /
+  - title: "Observability"
+    url: /observability
+  - title: "Operations"
+    url: /operations
+  - title: "Playbooks"
+    url: /playbooks/
+
+# GitHub repository info
+repository: "j0c2/project-seraphim"
+
+# Social links
+author:
+  name: "Project Seraphim"
+  github: "j0c2"
+
+# SEO
+lang: en-US
+
+# Exclude files from processing
+exclude:
+  - .gitignore
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/
+
+# Include files
+include:
+  - _pages
+  - _layouts
+  - _includes

@@ -1,3 +1,10 @@
+---
+layout: default
+title: Observability Guide
+description: Comprehensive monitoring, metrics, and dashboard setup for Project Seraphim
+nav_order: 2
+---
+
 # Observability Guide
 
 This guide explains the local observability stack (Prometheus + Grafana), the metrics exposed by the gateway and TorchServe, useful PromQL queries, dashboard usage, and troubleshooting tips. It also includes notes for running in Kubernetes.

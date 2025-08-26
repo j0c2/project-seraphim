@@ -1,3 +1,10 @@
+---
+layout: default
+title: Operations Guide
+description: Deployment, troubleshooting, and maintenance procedures for Project Seraphim
+nav_order: 3
+---
+
 # Operations Guide
 
 This guide covers operational procedures, troubleshooting, and day-to-day management of the ML inference platform.

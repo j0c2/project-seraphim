@@ -1,3 +1,11 @@
+---
+layout: default
+title: Rollback Playbook
+description: Safe model rollback strategies for Project Seraphim
+parent: Playbooks
+nav_order: 1
+---
+
 # Rollback Playbook
 
 1. Freeze deploys.
