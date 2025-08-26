@@ -27,12 +27,16 @@ It demonstrates how to run ML/LLM inference with production-grade guardrails:
 git clone https://github.com/yourhandle/project-seraphim.git
 cd project-seraphim
 
-# Start services with Docker Compose
+# Start services with Docker Compose (gateway, TorchServe, Prometheus, Grafana)
 docker compose up -d --build
 
-# Verify services are running
-curl http://localhost:8088/healthz  # Gateway health
-curl http://localhost:9081/models   # TorchServe models
+# Verify core services
+curl http://localhost:8088/healthz      # Gateway health
+curl http://localhost:9081/models       # TorchServe models (mgmt API)
+
+# Verify observability
+curl http://localhost:8088/metrics | head -n 10   # Gateway metrics
+curl -s 'http://localhost:9090/api/v1/targets' | jq '.data.activeTargets | map({job: .labels.job, health: .health})'
 
 # Test inference (10% canary to v2.0, 90% to v1.0)
 curl -X POST http://localhost:8088/predict \
@@ -44,7 +48,25 @@ curl -X POST http://localhost:8088/predict \
   -H "Content-Type: application/json" \
   -H "X-Canary: candidate" \
   -d '{"text": "test canary"}'
+
+# Generate some traffic so Prometheus/Grafana have data
+for i in {1..50}; do \
+  curl -s -X POST http://localhost:8088/predict -H 'Content-Type: application/json' -d "{\"text\": \"load$i\"}" >/dev/null; \
+done
 ```
+
+#### Local endpoints and ports
+
+- Gateway (FastAPI)
+  - http://localhost:8088/healthz, /readyz, /metrics, /predict
+- TorchServe
+  - Inference: http://localhost:9080
+  - Management: http://localhost:9081
+  - Metrics: http://localhost:9082/metrics
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (default admin/admin)
+
+Open Grafana and select the "Seraphim Inference Overview" dashboard (auto-provisioned).
 
 ### Using Kubernetes
 
@@ -84,7 +106,7 @@ graph TB
 
 ## 🔧 Configuration
 
-### Environment Variables
+### Environment Variables (Gateway)
 
 | Variable | Description | Default |
 |----------|-------------|---------|  
@@ -119,11 +141,40 @@ pytest tests/unit/test_canary_routing.py -v
 locust -f tests/e2e/locustfile.py --host http://localhost:8088
 ```
 
+### Linting & Formatting
+
+Use black, isort, and flake8 (configured via `setup.cfg`, line length 88):
+
+```bash
+# Format
+black services/ tests/ config/
+
+# Sort imports
+isort services/ tests/ config/
+
+# Lint
+flake8 services/ tests/ config/
+```
+
 ## 📊 Monitoring
 
-- **Metrics**: Exposed at `/metrics` on both gateway and TorchServe
-- **Dashboards**: Pre-configured Grafana dashboards in `config/observe/grafana/`
-- **Alerts**: Prometheus rules in `config/observe/prometheus/`
+- Metrics endpoints
+  - Gateway: exposes Prometheus metrics at `/metrics` (includes request counters, latency histogram, per-variant labels)
+  - TorchServe: exports metrics on 9082/metrics (Prometheus format enabled)
+- Prometheus
+  - Config at `config/observe/prometheus/prometheus.yml`
+  - Scrapes: gateway (inference:8080), TorchServe (model-server:8082)
+  - Example queries used by the dashboard:
+    - RPS (1m): `sum(rate(seraphim_inference_requests_total[1m]))`
+    - Error % (5m): `(sum(rate(seraphim_inference_requests_total{outcome!="success"}[5m])) / sum(rate(seraphim_inference_requests_total[5m]))) * 100`
+    - p95 latency (ms): `histogram_quantile(0.95, sum by (le) (rate(seraphim_inference_latency_seconds_bucket[5m]))) * 1000`
+- Grafana
+  - Provisioned datasource pointing to Prometheus
+  - Dashboard JSON at `config/observe/grafana/dashboards/seraphim.json`
+  - Panels include: RPS, Error %, p95 latency, Requests by Variant, Requests by Outcome, (optional) TorchServe RPS
+  - Login: admin/admin (local compose default)
+
+Tip: If TorchServe metrics appear empty on some images, rely on gateway metrics. You can still view TorchServe job health in Prometheus targets.
 
 ## 🚢 Deployment
 
