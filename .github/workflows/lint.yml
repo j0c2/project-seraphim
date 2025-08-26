@@ -8,7 +8,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install black isort flake8
-      - run: black --check services/
-      - run: isort --check-only services/
-      - run: flake8 services/
+      - name: Install linters
+        run: pip install --upgrade pip && pip install black isort flake8
+      - name: Black check
+        run: black --check services tests config
+      - name: isort check
+        run: isort --check-only --profile black services tests config
+      - name: flake8
+        run: flake8 services tests config

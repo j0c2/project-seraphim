@@ -38,3 +38,28 @@ data/
 logs/
 *.log
 .DS_Store
+
+# Editors/OS
+.idea/
+.vscode/
+
+# Python build/coverage
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+coverage.xml
+
+# Jekyll (docs)
+docs/_site/
+docs/.jekyll-cache/
+docs/.sass-cache/
+docs/vendor/
+docs/vendor/bundle/
+docs/.jekyll_build.log
+docs/.bundle_install.log
+
+# Virtual envs
+.venv*
+.venv_docs_hydejack/
