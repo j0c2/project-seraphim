@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: seraphim-model-server
+spec:
+  selector:
+    app: seraphim-model-server
+  type: {{ .Values.service.type }}
+  ports:
+    - name: inference
+      port: {{ .Values.service.ports.inference }}
+      targetPort: {{ .Values.service.ports.inference }}
+    - name: management
+      port: {{ .Values.service.ports.management }}
+      targetPort: {{ .Values.service.ports.management }}
+    - name: metrics
+      port: {{ .Values.service.ports.metrics }}
+      targetPort: {{ .Values.service.ports.metrics }}
