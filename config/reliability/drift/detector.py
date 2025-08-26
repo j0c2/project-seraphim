@@ -3,7 +3,9 @@
 - Embedding cosine distance threshold
 - Probability distribution KL divergence
 """
+
 from typing import List
+
 import numpy as np
 
 
@@ -20,6 +22,8 @@ def kl_divergence(p: np.ndarray, q: np.ndarray) -> float:
     return float(np.sum(p * (np.log(p) - np.log(q))))
 
 
-def is_drifted_cosine(ref: List[np.ndarray], cur: List[np.ndarray], threshold: float = 0.15) -> bool:
+def is_drifted_cosine(
+    ref: List[np.ndarray], cur: List[np.ndarray], threshold: float = 0.15
+) -> bool:
     dists = [cosine_distance(r, c) for r, c in zip(ref, cur)]
     return float(np.percentile(dists, 95)) > threshold

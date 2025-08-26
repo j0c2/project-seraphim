@@ -1,7 +1,4 @@
-import os
-import json
 import respx
-from httpx import Response
 from fastapi.testclient import TestClient
 
 # Wire app import from the real file
@@ -32,8 +29,9 @@ def test_predict_fallback_on_error(monkeypatch):
 
     with respx.mock(base_url="http://ts:8080") as mock:
         mock.post("/predictions/custom-text").respond(500, text="boom")
-        r = client.post("/predict", json={"text": "abc"})  # odd length -> negative fallback
+        r = client.post(
+            "/predict", json={"text": "abc"}
+        )  # odd length -> negative fallback
         assert r.status_code == 200
         body = r.json()
         assert body["prediction"] in ("negative", "positive")
-

@@ -1,2 +1,1 @@
-__all__ = ['drift', 'canary', 'chaos']
-
+__all__ = ["drift", "canary", "chaos"]

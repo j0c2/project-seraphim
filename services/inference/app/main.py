@@ -1,40 +1,50 @@
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel, Field
-import time
-import random
-import os
-import httpx
 import hashlib
 import logging
-from typing import Optional, Dict, Any
+import os
+import random
+import time
 from enum import Enum
+from typing import Any, Dict, Optional
+
+import httpx
+from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel, Field
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Seraphim Inference API",
     version="0.1.0",
-    description="Gateway service with canary routing for ML model inference"
+    description="Gateway service with canary routing for ML model inference",
 )
+
 
 class ModelVariant(str, Enum):
     BASELINE = "baseline"
     CANDIDATE = "candidate"
 
+
 class PredictRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=10000, description="Text to predict")
+    text: str = Field(
+        ..., min_length=1, max_length=10000, description="Text to predict"
+    )
+
 
 class PredictResponse(BaseModel):
     prediction: str = Field(..., description="Model prediction result")
     version: str = Field(..., description="API version")
     latency_ms: float = Field(..., description="Request latency in milliseconds")
-    model_variant: Optional[str] = Field(None, description="Which model variant was used")
-    model_version: Optional[str] = Field(None, description="Specific model version used")
+    model_variant: Optional[str] = Field(
+        None, description="Which model variant was used"
+    )
+    model_version: Optional[str] = Field(
+        None, description="Specific model version used"
+    )
+
 
 MODEL_VERSION = "v0"
 
@@ -57,7 +67,9 @@ def _parse_percent(val: Optional[str], default: float = 0.0) -> float:
         return default
 
 
-def _choose_variant(request: Request, canary_percent: float, sticky_header: str, salt: str) -> str:
+def _choose_variant(
+    request: Request, canary_percent: float, sticky_header: str, salt: str
+) -> str:
     # Explicit override header if present
     force = request.headers.get(os.environ.get("CANARY_FORCE_HEADER", "X-Canary"))
     if force:
@@ -84,6 +96,7 @@ def health() -> Dict[str, Any]:
     """Health check endpoint for Kubernetes probes."""
     return {"ok": True, "version": MODEL_VERSION}
 
+
 @app.get("/readyz", tags=["health"])
 async def ready() -> Dict[str, Any]:
     """Readiness check - verify TorchServe connectivity."""
@@ -102,26 +115,28 @@ async def ready() -> Dict[str, Any]:
 async def predict(req: PredictRequest, request: Request) -> PredictResponse:
     """Main prediction endpoint with canary routing."""
     start = time.time()
-    
+
     # Configuration
     ts_url_default = os.environ.get("TS_URL", "http://localhost:8080")
     ts_url_candidate = os.environ.get("TS_URL_CANDIDATE", ts_url_default)
-    
+
     # Baseline model config
-    model_name_baseline = os.environ.get("MODEL_NAME_BASELINE", os.environ.get("MODEL_NAME", "custom-text"))
+    model_name_baseline = os.environ.get(
+        "MODEL_NAME_BASELINE", os.environ.get("MODEL_NAME", "custom-text")
+    )
     model_version_baseline = os.environ.get("MODEL_VERSION_BASELINE", "")
-    
+
     # Candidate model config
     model_name_candidate = os.environ.get("MODEL_NAME_CANDIDATE", model_name_baseline)
     model_version_candidate = os.environ.get("MODEL_VERSION_CANDIDATE", "")
-    
+
     # Canary routing
     canary_percent = _parse_percent(os.environ.get("CANARY_PERCENT", "0"), 0.0)
     sticky_header = os.environ.get("CANARY_STICKY_HEADER", "X-User-Id")
     salt = os.environ.get("CANARY_STICKY_SALT", "seraphim")
-    
+
     variant = _choose_variant(request, canary_percent, sticky_header, salt)
-    
+
     # Resolve target
     if variant == "candidate":
         target_ts = ts_url_candidate
@@ -133,36 +148,34 @@ async def predict(req: PredictRequest, request: Request) -> PredictResponse:
         target_name = model_name_baseline
         target_ver = model_version_baseline
         used_variant = ModelVariant.BASELINE
-    
+
     # Build TorchServe URL
     if target_ver:
         url = f"{target_ts}/predictions/{target_name}/{target_ver}"
     else:
         url = f"{target_ts}/predictions/{target_name}"
-    
+
     logger.info(f"Routing to {used_variant.value}: {url}")
-    
+
     try:
         headers = {"Content-Type": "text/plain"}
         timeout_ms = float(os.environ.get("TS_TIMEOUT_MS", "3000"))
-        
+
         async with httpx.AsyncClient(timeout=timeout_ms / 1000.0) as client:
             response = await client.post(
-                url, 
-                content=req.text.encode("utf-8"), 
-                headers=headers
+                url, content=req.text.encode("utf-8"), headers=headers
             )
             response.raise_for_status()
-            
+
             content_type = response.headers.get("content-type", "")
             if content_type.startswith("application/json"):
                 data = response.json()
                 pred = data.get("prediction", data.get("result", "unknown"))
             else:
                 pred = response.text.strip()
-                
+
             logger.info(f"Successfully got prediction from {used_variant.value}")
-            
+
     except httpx.TimeoutException as e:
         logger.warning(f"Timeout calling {url}: {e}")
         # Fallback to dummy prediction
@@ -170,7 +183,7 @@ async def predict(req: PredictRequest, request: Request) -> PredictResponse:
         logger.info("Using fallback prediction due to timeout")
     except httpx.HTTPStatusError as e:
         logger.warning(f"HTTP error from {url}: {e.response.status_code}")
-        # Fallback to dummy prediction  
+        # Fallback to dummy prediction
         pred = "positive" if (len(req.text) % 2 == 0) else "negative"
         logger.info("Using fallback prediction due to HTTP error")
     except Exception as e:
@@ -178,11 +191,11 @@ async def predict(req: PredictRequest, request: Request) -> PredictResponse:
         # Fallback to dummy prediction
         pred = "positive" if (len(req.text) % 2 == 0) else "negative"
         logger.info("Using fallback prediction due to error")
-    
+
     return PredictResponse(
         prediction=pred,
         version=MODEL_VERSION,
         latency_ms=(time.time() - start) * 1000.0,
         model_variant=used_variant.value,
-        model_version=target_ver if target_ver else "default"
+        model_version=target_ver if target_ver else "default",
     )

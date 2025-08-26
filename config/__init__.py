@@ -1,2 +1,1 @@
-__all__ = ['reliability']
-
+__all__ = ["reliability"]

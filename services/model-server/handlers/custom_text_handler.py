@@ -1,5 +1,6 @@
 from ts.torch_handler.base_handler import BaseHandler
 
+
 class CustomTextHandler(BaseHandler):
     def initialize(self, context):
         # No model weights needed for the dummy example
