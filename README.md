@@ -68,6 +68,8 @@ done
 
 Open Grafana and select the "Seraphim Inference Overview" dashboard (auto-provisioned).
 
+See the [Observability Guide](docs/observability.md) for monitoring details and the [Operations Guide](docs/operations.md) for deployment, troubleshooting, and maintenance procedures.
+
 ### Using Kubernetes
 
 ```bash
