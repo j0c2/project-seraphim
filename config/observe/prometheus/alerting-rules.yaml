@@ -1,23 +1,170 @@
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  name: seraphim-alerts
-spec:
-  groups:
+groups:
     - name: seraphim.slo
       rules:
+        # Application SLO Alerts
         - alert: SeraphimHighErrorRate
-          expr: sum(rate(http_requests_total{status=~"5..",app="seraphim-inference"}[5m]))
-                / sum(rate(http_requests_total{app="seraphim-inference"}[5m])) > 0.01
-          for: 5m
+          expr: |
+            (
+              sum(rate(seraphim_inference_requests_total{outcome!="success"}[5m]))
+              / sum(rate(seraphim_inference_requests_total[5m]))
+            ) * 100 > 5
+          for: 2m
           labels:
-            severity: warning
+            severity: critical
+            service: seraphim-inference
           annotations:
-            summary: "High 5xx error rate"
+            summary: "High error rate detected"
+            description: "Seraphim inference service has {{ $value }}% error rate over the last 5 minutes"
+            runbook_url: "https://docs.seraphim.ai/runbooks/high-error-rate"
+            
         - alert: SeraphimHighLatencyP95
-          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app="seraphim-inference"}[5m])) by (le)) > 0.1
+          expr: |
+            histogram_quantile(0.95, 
+              sum(rate(seraphim_inference_latency_seconds_bucket[5m])) by (le)
+            ) * 1000 > 500
+          for: 5m
+          labels:
+            severity: warning
+            service: seraphim-inference
+          annotations:
+            summary: "High P95 latency detected"
+            description: "Seraphim inference service P95 latency is {{ $value }}ms over the last 5 minutes"
+            runbook_url: "https://docs.seraphim.ai/runbooks/high-latency"
+            
+        - alert: SeraphimLowRequestRate
+          expr: sum(rate(seraphim_inference_requests_total[5m])) < 0.1
+          for: 10m
+          labels:
+            severity: warning
+            service: seraphim-inference
+          annotations:
+            summary: "Very low request rate"
+            description: "Seraphim inference service is receiving less than 0.1 RPS for 10 minutes"
+            
+        - alert: SeraphimCanaryTrafficImbalance
+          expr: |
+            abs(
+              (
+                sum(rate(seraphim_inference_requests_total{variant="candidate"}[5m]))
+                / sum(rate(seraphim_inference_requests_total[5m]))
+              ) * 100 - 10
+            ) > 5
+          for: 5m
+          labels:
+            severity: warning
+            service: seraphim-inference
+          annotations:
+            summary: "Canary traffic distribution is off target"
+            description: "Canary traffic is {{ $value }}% away from expected 10%"
+            
+    - name: seraphim.observability
+      rules:
+        # Observability Stack Health
+        - alert: PrometheusDown
+          expr: up{job="prometheus"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            service: prometheus
+          annotations:
+            summary: "Prometheus is down"
+            description: "Prometheus has been down for more than 1 minute"
+            
+        - alert: JaegerDown
+          expr: up{job="jaeger"} == 0
+          for: 5m
+          labels:
+            severity: warning
+            service: jaeger
+          annotations:
+            summary: "Jaeger is down"
+            description: "Jaeger tracing service has been down for more than 5 minutes"
+            
+        - alert: GrafanaDown
+          expr: up{job="grafana"} == 0
+          for: 5m
+          labels:
+            severity: warning
+            service: grafana
+          annotations:
+            summary: "Grafana is down"
+            description: "Grafana has been down for more than 5 minutes"
+            
+        # Service Health
+        - alert: SeraphimInferenceDown
+          expr: up{job="seraphim-gateway"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            service: seraphim-inference
+          annotations:
+            summary: "Seraphim inference service is down"
+            description: "Seraphim inference service has been down for more than 1 minute"
+            
+        - alert: TorchServeDown
+          expr: up{job="torchserve"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            service: torchserve
+          annotations:
+            summary: "TorchServe is down"
+            description: "TorchServe model server has been down for more than 2 minutes"
+            
+        # Resource Usage
+        - alert: HighMemoryUsage
+          expr: |
+            (
+              process_resident_memory_bytes{job=~"seraphim-gateway|torchserve"}
+              / (1024 * 1024 * 1024)
+            ) > 2
           for: 5m
           labels:
             severity: warning
           annotations:
-            summary: "P95 latency above 100ms"
+            summary: "High memory usage"
+            description: "Service {{ $labels.job }} is using {{ $value }}GB of memory"
+            
+    - name: seraphim.logs
+      rules:
+        # Log-based alerts (These would need log-to-metrics conversion or external tools)
+        - alert: HighLogErrorRate
+          expr: |
+            (
+              sum(rate(log_entries_total{level="ERROR", service="seraphim-inference"}[5m]))
+              / sum(rate(log_entries_total{service="seraphim-inference"}[5m]))
+            ) * 100 > 1
+          for: 2m
+          labels:
+            severity: warning
+            service: seraphim-inference
+          annotations:
+            summary: "High log error rate"
+            description: "Error logs are {{ $value }}% of total logs in the last 5 minutes"
+            
+        - alert: LogVolumeSpike
+          expr: |
+            sum(rate(log_entries_total{service="seraphim-inference"}[5m]))
+            > 2 * avg_over_time(
+              sum(rate(log_entries_total{service="seraphim-inference"}[5m]))[30m:5m]
+            )
+          for: 2m
+          labels:
+            severity: info
+            service: seraphim-inference
+          annotations:
+            summary: "Log volume spike detected"
+            description: "Log volume is {{ $value }}x higher than average"
+            
+        - alert: NoLogsReceived
+          expr: |
+            absent_over_time(
+              log_entries_total{service="seraphim-inference"}[10m]
+            )
+          for: 10m
+          labels:
+            severity: warning
+            service: seraphim-inference
+          annotations:
+            summary: "No logs received from service"
+            description: "No logs received from seraphim-inference service for 10 minutes"

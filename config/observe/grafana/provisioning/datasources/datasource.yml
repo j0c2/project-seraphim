@@ -5,8 +5,44 @@ datasources:
     type: prometheus
     access: proxy
     url: http://prometheus:9090
+    uid: prometheus
     isDefault: true
     editable: true
     jsonData:
       timeInterval: 5s
+  
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    uid: loki
+    isDefault: false
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: jaeger
+          matcherRegex: "\"trace_id\": \"([0-9a-f]+)\""
+          name: TraceID
+          url: "$${__value.raw}"
+  
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    uid: jaeger
+    isDefault: false
+    editable: true
+    jsonData:
+      tracesToLogs:
+        datasourceUid: loki
+        tags: ['correlation_id']
+        mappedTags:
+          - key: correlation_id
+            value: correlation_id
+        mapTagNamesEnabled: true
+        spanStartTimeShift: '-1m'
+        spanEndTimeShift: '1m'
+      nodeGraph:
+        enabled: true
 

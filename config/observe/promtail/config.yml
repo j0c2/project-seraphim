@@ -1,0 +1,72 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape Docker container logs with enhanced parsing
+  - job_name: docker_logs
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        target_label: container_name
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        target_label: compose_project
+      # Only scrape containers from our compose project with inference service
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        regex: inference
+        action: keep
+      # Set default service label for inference containers
+      - target_label: service
+        replacement: seraphim-inference
+    pipeline_stages:
+      # Parse Docker JSON log format first
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            time: time
+      # Try to parse application JSON logs
+      - json:
+          expressions:
+            timestamp: asctime
+            level: levelname
+            logger: name
+            message: message
+            service_name: service_name
+            trace_id: trace_id
+            span_id: span_id
+            correlation_id: correlation_id
+            variant: variant
+            model_name: model_name
+            prediction: prediction
+            latency_ms: latency_ms
+            error: error
+            url: url
+          source: output
+      # Use timestamp from application or fall back to Docker timestamp
+      - timestamp:
+          format: "2006-01-02T15:04:05Z"
+          source: timestamp
+      - timestamp:
+          format: RFC3339Nano
+          source: time
+      # Set required labels - at least one must be present
+      - labels:
+          service: "seraphim-inference"
+          level:
+          correlation_id:
+          variant:
+          container_name:
+      # Output the message or original log content
+      - output:
+          source: message

@@ -16,9 +16,11 @@ services:
 
   inference:
     build:
-      context: ./services/inference
+      context: ./services
+      dockerfile: ./inference/Dockerfile
     image: seraphim-inference:dev
     environment:
+      # Model configuration
       TS_URL: http://model-server:8080
       MODEL_NAME_BASELINE: custom-text
       MODEL_VERSION_BASELINE: "1.0"
@@ -28,10 +30,17 @@ services:
       CANARY_STICKY_HEADER: X-User-Id
       CANARY_STICKY_SALT: seraphim
       TS_TIMEOUT_MS: "500"
+      # Observability configuration
+      LOG_LEVEL: INFO
+      SERVICE_VERSION: "0.1.0"
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: "6831"
+      TRACE_CONSOLE: "false"
     ports:
       - "8088:8080"
     depends_on:
       - model-server
+      - jaeger
 
   prometheus:
     image: prom/prometheus:latest
@@ -40,6 +49,7 @@ services:
     volumes:
       - ./config/observe/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./config/observe/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - ./config/observe/prometheus/alerting-rules.yaml:/etc/prometheus/alerting-rules.yaml:ro
     ports:
       - "9090:9090"
     depends_on:
@@ -52,6 +62,8 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: true
+      GF_INSTALL_PLUGINS: ""
     volumes:
       - ./config/observe/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./config/observe/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
@@ -60,3 +72,40 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+      - loki
+      - jaeger
+
+  # Distributed Tracing with Jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:1.50
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+      COLLECTOR_ZIPKIN_HOST_PORT: ":9411"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # OTLP gRPC receiver
+      - "6831:6831/udp"  # Jaeger agent UDP
+      - "6832:6832/udp"  # Jaeger agent UDP
+      - "14268:14268"  # Jaeger HTTP collector
+    command:
+      - --log-level=info
+
+  # Centralized Logging with Loki
+  loki:
+    image: grafana/loki:2.9.2
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./config/observe/loki:/etc/loki:ro
+
+  # Log shipping with Promtail
+  promtail:
+    image: grafana/promtail:2.9.2
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./config/observe/promtail:/etc/promtail:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - loki
