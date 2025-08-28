@@ -1,0 +1,307 @@
+name: E2E Observability Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'services/**'
+      - 'tests/e2e/**'
+      - 'config/observe/**'
+      - 'docker-compose*.yml'
+      - '.github/workflows/e2e-observability.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'services/**'
+      - 'tests/e2e/**'
+      - 'config/observe/**'
+      - 'docker-compose*.yml'
+  schedule:
+    # Run tests daily at 2 AM UTC to catch environment drift
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_pattern:
+        description: 'Pytest pattern to run (e.g., test_metrics or TestIntegration)'
+        required: false
+        default: ''
+      log_level:
+        description: 'Log level for tests'
+        required: false
+        default: 'INFO'
+        type: choice
+        options:
+          - DEBUG
+          - INFO
+          - WARNING
+          - ERROR
+
+jobs:
+  e2e-observability-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    strategy:
+      matrix:
+        # Test against different Python versions if needed
+        python-version: ["3.11"]
+      fail-fast: false
+    
+    env:
+      DOCKER_BUILDKIT: 1
+      COMPOSE_DOCKER_CLI_BUILD: 1
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+          
+    - name: Free up disk space
+      run: |
+        docker system prune -af
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+        df -h
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Install local dependencies for test utilities
+      run: |
+        pip install --upgrade pip
+        pip install docker-compose pytest
+    
+    - name: Validate Docker Compose configuration
+      run: |
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml config --quiet
+    
+    - name: Build Docker images
+      run: |
+        # Build inference service image
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml build inference
+        
+        # Build test runner image
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml build test-runner
+    
+    - name: Start observability stack
+      run: |
+        # Start all services except test-runner
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml up -d \
+          inference prometheus jaeger loki promtail grafana
+    
+    - name: Wait for services to be healthy
+      timeout-minutes: 10
+      run: |
+        echo "Waiting for services to become healthy..."
+        
+        # Function to check service health
+        check_health() {
+          local service=$1
+          local max_attempts=60
+          local attempt=0
+          
+          while [ $attempt -lt $max_attempts ]; do
+            if docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps $service | grep -q "healthy"; then
+              echo "✅ $service is healthy"
+              return 0
+            fi
+            
+            echo "⏳ Waiting for $service to be healthy (attempt $((attempt+1))/$max_attempts)..."
+            sleep 5
+            attempt=$((attempt+1))
+          done
+          
+          echo "❌ $service failed to become healthy"
+          docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml logs $service
+          return 1
+        }
+        
+        # Check each service
+        check_health "inference"
+        check_health "prometheus" 
+        check_health "jaeger"
+        check_health "loki"
+        check_health "grafana"
+        
+        echo "All services are healthy!"
+    
+    - name: Show service status
+      run: |
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps
+        echo "Docker containers:"
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    
+    - name: Verify service endpoints
+      run: |
+        echo "Checking service endpoints..."
+        
+        # Check inference service
+        curl -f http://localhost:8080/health || (echo "Inference health check failed" && exit 1)
+        echo "✅ Inference service is responding"
+        
+        # Check Prometheus
+        curl -f http://localhost:9090/-/ready || (echo "Prometheus ready check failed" && exit 1)
+        echo "✅ Prometheus is responding"
+        
+        # Check Jaeger
+        curl -f http://localhost:16686/api/services || (echo "Jaeger API check failed" && exit 1)
+        echo "✅ Jaeger is responding"
+        
+        # Check Loki
+        curl -f http://localhost:3100/ready || (echo "Loki ready check failed" && exit 1)
+        echo "✅ Loki is responding"
+        
+        # Check Grafana
+        curl -f http://localhost:3000/api/health || (echo "Grafana health check failed" && exit 1)
+        echo "✅ Grafana is responding"
+    
+    - name: Generate baseline observability data
+      run: |
+        echo "Generating baseline data..."
+        # Make a few requests to generate initial metrics/traces/logs
+        for i in {1..5}; do
+          curl -X POST http://localhost:8080/predict \
+            -H "Content-Type: application/json" \
+            -d "{\"text\": \"Baseline test $i\", \"model\": \"primary\"}" || true
+          sleep 1
+        done
+        
+        # Wait for data to propagate
+        sleep 10
+        
+        # Check that we have some metrics
+        curl -s "http://localhost:9090/api/v1/query?query=up" | jq '.data.result | length' || true
+    
+    - name: Run E2E observability tests
+      env:
+        TEST_INFERENCE_URL: http://localhost:8080
+        TEST_PROMETHEUS_URL: http://localhost:9090
+        TEST_JAEGER_URL: http://localhost:16686
+        TEST_LOKI_URL: http://localhost:3100
+        TEST_GRAFANA_URL: http://localhost:3000
+        TEST_TIMEOUT: 300
+        LOG_LEVEL: ${{ github.event.inputs.log_level || 'INFO' }}
+        PYTHONPATH: ${{ github.workspace }}
+      run: |
+        # Set test pattern if provided
+        TEST_PATTERN="${{ github.event.inputs.test_pattern }}"
+        PYTEST_ARGS="tests/e2e/ -v --tb=short --maxfail=5"
+        
+        if [ -n "$TEST_PATTERN" ]; then
+          PYTEST_ARGS="$PYTEST_ARGS -k $TEST_PATTERN"
+        fi
+        
+        echo "Running tests with: pytest $PYTEST_ARGS"
+        
+        # Run tests using the test runner container
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml run \
+          --rm \
+          --name e2e-test-runner \
+          test-runner pytest $PYTEST_ARGS
+    
+    - name: Collect test artifacts on failure
+      if: failure()
+      run: |
+        echo "Collecting diagnostic information..."
+        
+        # Create artifacts directory
+        mkdir -p test-artifacts
+        
+        # Collect service logs
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml logs --no-color > test-artifacts/docker-compose-logs.txt 2>&1 || true
+        
+        # Collect individual service logs
+        for service in inference prometheus jaeger loki promtail grafana; do
+          echo "Collecting logs for $service..."
+          docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml logs --no-color $service > test-artifacts/$service-logs.txt 2>&1 || true
+        done
+        
+        # Collect service status
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps > test-artifacts/service-status.txt 2>&1 || true
+        docker ps -a > test-artifacts/docker-ps.txt 2>&1 || true
+        
+        # Collect Prometheus targets and config
+        curl -s http://localhost:9090/api/v1/targets > test-artifacts/prometheus-targets.json 2>&1 || true
+        curl -s http://localhost:9090/api/v1/status/config > test-artifacts/prometheus-config.json 2>&1 || true
+        
+        # Collect some sample metrics
+        curl -s "http://localhost:9090/api/v1/query?query=up" > test-artifacts/prometheus-up-metrics.json 2>&1 || true
+        
+        # Collect Jaeger services
+        curl -s http://localhost:16686/api/services > test-artifacts/jaeger-services.json 2>&1 || true
+        
+        # System resources
+        df -h > test-artifacts/disk-usage.txt 2>&1 || true
+        free -h > test-artifacts/memory-usage.txt 2>&1 || true
+        
+        echo "Artifacts collected in test-artifacts/"
+    
+    - name: Upload test artifacts
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: e2e-test-artifacts-${{ github.run_number }}
+        path: test-artifacts/
+        retention-days: 7
+    
+    - name: Generate test report summary
+      if: always()
+      run: |
+        echo "# E2E Observability Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "✅ **All tests passed!**" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Tests failed. Check the logs above and artifacts for details.**" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Service Status" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps >> $GITHUB_STEP_SUMMARY 2>&1 || true
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Test Configuration" >> $GITHUB_STEP_SUMMARY
+        echo "- **Python version:** ${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Test pattern:** ${{ github.event.inputs.test_pattern || 'all' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Log level:** ${{ github.event.inputs.log_level || 'INFO' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        echo "Cleaning up..."
+        
+        # Stop and remove containers
+        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml down -v --remove-orphans || true
+        
+        # Clean up test images and containers
+        docker system prune -f || true
+        
+        # Show remaining disk usage
+        df -h
+
+  notify-on-failure:
+    needs: e2e-observability-tests
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name == 'schedule'
+    steps:
+    - name: Notify on scheduled test failure
+      run: |
+        echo "Scheduled E2E observability tests failed."
+        echo "This indicates potential issues with the observability stack."
+        echo "Please check the test artifacts and investigate."
+        # Add notification logic here (Slack, email, etc.)

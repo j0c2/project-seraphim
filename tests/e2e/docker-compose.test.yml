@@ -1,0 +1,151 @@
+# Docker Compose override for E2E observability testing
+# This extends the main docker-compose.yml with test-specific configurations
+
+version: '3.8'
+
+services:
+  # Inference service with test configuration
+  inference:
+    environment:
+      - LOG_LEVEL=DEBUG
+      - OTEL_SERVICE_NAME=inference-test
+      - OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - PROMETHEUS_REGISTRY_ENABLED=true
+      - METRICS_ENABLED=true
+      - TRACING_ENABLED=true
+    ports:
+      - "8080:8080"  # Expose for direct testing
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - prometheus
+      - jaeger
+
+  # Prometheus with test configuration
+  prometheus:
+    ports:
+      - "9090:9090"  # Expose for test queries
+    volumes:
+      - ./config/prometheus-test.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=1h'  # Short retention for tests
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger collector HTTP
+      - "6831:6831/udp"  # Jaeger agent
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:14269/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Loki for log aggregation
+  loki:
+    image: grafana/loki:2.9.0
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./config/loki-test.yml:/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Promtail for log shipping
+  promtail:
+    image: grafana/promtail:2.9.0
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./config/promtail-test.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  # Grafana for dashboards and visualization
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+
+  # Test runner service
+  test-runner:
+    build:
+      context: ../../
+      dockerfile: tests/e2e/Dockerfile.test
+    volumes:
+      - ../../:/app
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # For testcontainers if needed
+    environment:
+      - PYTHONPATH=/app
+      - TEST_INFERENCE_URL=http://inference:8080
+      - TEST_PROMETHEUS_URL=http://prometheus:9090
+      - TEST_JAEGER_URL=http://jaeger:16686
+      - TEST_LOKI_URL=http://loki:3100
+      - TEST_GRAFANA_URL=http://grafana:3000
+      - TEST_TIMEOUT=300
+      - LOG_LEVEL=INFO
+    depends_on:
+      inference:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      grafana:
+        condition: service_healthy
+    command: ["pytest", "/app/tests/e2e/", "-v", "--tb=short"]
+    profiles:
+      - test  # Only run when explicitly requested
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: observability-test-network

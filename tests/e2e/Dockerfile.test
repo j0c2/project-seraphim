@@ -1,0 +1,33 @@
+FROM python:3.11-slim
+
+# Install system dependencies for testing
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy requirements
+COPY requirements.txt /app/
+COPY tests/e2e/requirements-e2e.txt /app/tests/e2e/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r tests/e2e/requirements-e2e.txt
+
+# Copy source code
+COPY . /app/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash testuser
+RUN chown -R testuser:testuser /app
+USER testuser
+
+# Default command for running tests
+CMD ["pytest", "tests/e2e/", "-v", "--tb=short", "--maxfail=5"]

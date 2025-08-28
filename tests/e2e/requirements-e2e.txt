@@ -1,0 +1,36 @@
+# E2E test dependencies
+pytest==7.4.0
+pytest-asyncio==0.21.0
+pytest-xdist==3.3.1
+httpx==0.24.1
+aiohttp==3.8.4
+requests==2.31.0
+
+# For test fixtures and mocking
+respx==0.20.1
+faker==19.3.0
+
+# For observability client libraries
+prometheus-client==0.17.1
+jaeger-client==4.8.0
+
+# For Grafana API interaction
+grafana-api==1.0.3
+
+# For structured logging in tests
+structlog==23.1.0
+
+# For load testing integration
+locust==2.15.1
+
+# For Docker integration (optional)
+docker==6.1.3
+testcontainers==3.7.1
+
+# For configuration management
+pydantic==2.1.1
+python-dotenv==1.0.0
+
+# For timing and retries
+tenacity==8.2.2
+backoff==2.2.1
