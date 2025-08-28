@@ -1,24 +1,409 @@
-name: CI
+name: CI/CD Pipeline
+
 on:
   pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
   push:
-    branches: [ main ]
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      run_security_scans:
+        description: 'Run security scans'
+        required: false
+        default: true
+        type: boolean
+
+# Global environment variables
+env:
+  PYTHON_VERSION_MATRIX: '["3.10", "3.11", "3.12"]'
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test-build:
+  # Job to detect changes and set up matrix
+  detect-changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
+    outputs:
+      python-changed: ${{ steps.changes.outputs.python }}
+      docker-changed: ${{ steps.changes.outputs.docker }}
+      docs-changed: ${{ steps.changes.outputs.docs }}
+      test-matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            python:
+              - '**/*.py'
+              - '**/requirements*.txt'
+              - 'pyproject.toml'
+              - 'setup.py'
+            docker:
+              - '**/Dockerfile*'
+              - 'docker-compose*.yml'
+              - '.dockerignore'
+            docs:
+              - 'docs/**'
+              - '*.md'
+
+      - name: Set test matrix
+        id: set-matrix
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "matrix=${{ env.PYTHON_VERSION_MATRIX }}" >> $GITHUB_OUTPUT
+          else
+            echo 'matrix=["3.11"]' >> $GITHUB_OUTPUT
+          fi
+
+  # Linting and code quality checks
+  lint-and-quality:
+    name: Lint & Quality Checks
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python-changed == 'true'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install service requirements
-        run: pip install -r services/inference/requirements.txt
-      - name: Install development requirements
-        run: pip install -r requirements-dev.txt
-      - run: pytest -q tests/unit
-      - name: Docker build
-        uses: docker/build-push-action@v6
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements-dev.txt
+            services/*/requirements.txt
+
+      - name: Install linting dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black isort flake8 mypy bandit safety pylint
+
+      - name: Cache pre-commit hooks
+        uses: actions/cache@v4
         with:
-          context: ./services/inference
-          push: false
-          tags: seraphim-inference:ci
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
+      - name: Run Black formatting check
+        run: black --check --diff services tests config
+
+      - name: Run isort import sorting check
+        run: isort --check-only --diff --profile black services tests config
+
+      - name: Run flake8 linting
+        run: flake8 services tests config --statistics --count
+
+      - name: Run mypy type checking
+        run: mypy services --ignore-missing-imports --no-strict-optional
+        continue-on-error: true
+
+      - name: Run bandit security linting
+        run: bandit -r services -f json -o bandit-report.json
+        continue-on-error: true
+
+      - name: Upload bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-security-report
+          path: bandit-report.json
+          retention-days: 7
+
+  # Unit and integration tests
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: [detect-changes, lint-and-quality]
+    if: always() && needs.detect-changes.outputs.python-changed == 'true'
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJson(needs.detect-changes.outputs.test-matrix) }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements-dev.txt
+            services/*/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Create test results directory
+        run: mkdir -p test-results
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit \
+            --cov=services \
+            --cov-report=xml:test-results/coverage.xml \
+            --cov-report=html:test-results/htmlcov \
+            --cov-report=term-missing \
+            --junitxml=test-results/pytest.xml \
+            -v
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: test-results/
+          retention-days: 7
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.11'
+        with:
+          file: test-results/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          token: ${{ secrets.CODECOV_TOKEN }}
+        continue-on-error: true
+
+  # Docker build and security scanning
+  docker-build:
+    name: Docker Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.docker-changed == 'true' || needs.detect-changes.outputs.python-changed == 'true'
+    
+    strategy:
+      matrix:
+        service: [inference]
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ matrix.service }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ matrix.service }}-
+            ${{ runner.os }}-buildx-
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          platforms: linux/amd64
+          load: true
+          tags: |
+            seraphim-${{ matrix.service }}:latest
+            seraphim-${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Test Docker image
+        run: |
+          docker run --rm -d --name test-container -p 8080:8080 seraphim-${{ matrix.service }}:latest
+          sleep 10
+          curl -f http://localhost:8080/health || exit 1
+          docker stop test-container
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: seraphim-${{ matrix.service }}:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Save Docker image
+        run: |
+          docker save seraphim-${{ matrix.service }}:latest | gzip > ${{ matrix.service }}-image.tar.gz
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-${{ matrix.service }}
+          path: ${{ matrix.service }}-image.tar.gz
+          retention-days: 3
+
+  # Dependency vulnerability scanning
+  security-scans:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.run_security_scans == 'true'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety pip-audit
+
+      - name: Run Safety check
+        run: |
+          safety check --json --output safety-report.json
+        continue-on-error: true
+
+      - name: Run pip-audit
+        run: |
+          pip-audit --format=json --output=pip-audit-report.json
+        continue-on-error: true
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            safety-report.json
+            pip-audit-report.json
+          retention-days: 7
+
+  # Performance and load testing
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [test, docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-inference
+
+      - name: Load Docker image
+        run: |
+          gunzip -c inference-image.tar.gz | docker load
+
+      - name: Run performance tests
+        run: |
+          # Start the service
+          docker run -d --name perf-test -p 8080:8080 seraphim-inference:latest
+          sleep 15
+          
+          # Run basic performance test with locust
+          locust --headless --users 10 --spawn-rate 2 --run-time 60s \
+            --host http://localhost:8080 \
+            --html performance-report.html \
+            --csv performance-results
+        continue-on-error: true
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-results
+          path: |
+            performance-report.html
+            performance-results*.csv
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: docker stop perf-test && docker rm perf-test
+
+  # Collect and report results
+  results:
+    name: Collect Results
+    runs-on: ubuntu-latest
+    needs: [lint-and-quality, test, docker-build, security-scans]
+    if: always()
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate summary report
+        run: |
+          echo "# CI Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Job status summary
+          echo "## Job Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint & Quality | ${{ needs.lint-and-quality.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ${{ needs.docker-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scans | ${{ needs.security-scans.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Artifacts summary
+          echo "## Generated Artifacts" >> $GITHUB_STEP_SUMMARY
+          find artifacts -name "*.json" -o -name "*.xml" -o -name "*.html" | \
+            head -10 | while read file; do
+              echo "- $(basename "$file")" >> $GITHUB_STEP_SUMMARY
+            done
+
+      - name: Set workflow status
+        run: |
+          if [[ "${{ needs.lint-and-quality.result }}" == "failure" || \
+                "${{ needs.test.result }}" == "failure" || \
+                "${{ needs.docker-build.result }}" == "failure" ]]; then
+            echo "Critical jobs failed - failing workflow"
+            exit 1
+          fi

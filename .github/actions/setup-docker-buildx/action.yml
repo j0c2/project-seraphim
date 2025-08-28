@@ -1,0 +1,61 @@
+name: 'Setup Docker Buildx'
+description: 'Set up Docker Buildx with caching and multi-platform support'
+
+inputs:
+  cache-key:
+    description: 'Cache key for Docker layers'
+    required: false
+    default: ${{ github.sha }}
+  cache-scope:
+    description: 'Scope for cache (e.g., ci, e2e, security)'
+    required: false
+    default: 'default'
+  platforms:
+    description: 'Platforms to support'
+    required: false
+    default: 'linux/amd64'
+  install-qemu:
+    description: 'Install QEMU for multi-platform builds'
+    required: false
+    default: 'false'
+
+outputs:
+  cache-hit:
+    description: 'Whether there was a cache hit'
+    value: ${{ steps.cache.outputs.cache-hit }}
+  buildx-name:
+    description: 'Name of the buildx instance'
+    value: ${{ steps.buildx.outputs.name }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up QEMU
+      if: inputs.install-qemu == 'true'
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        platforms: ${{ inputs.platforms }}
+        driver-opts: |
+          network=host
+
+    - name: Cache Docker layers
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ inputs.cache-scope }}-${{ inputs.cache-key }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-${{ inputs.cache-scope }}-
+          ${{ runner.os }}-buildx-
+
+    - name: Display Docker info
+      shell: bash
+      run: |
+        echo "Docker version: $(docker --version)"
+        echo "Docker Buildx version: $(docker buildx version)"
+        echo "Available builders:"
+        docker buildx ls

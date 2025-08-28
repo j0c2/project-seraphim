@@ -39,17 +39,18 @@ on:
 jobs:
   e2e-observability-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     
     strategy:
       matrix:
-        # Test against different Python versions if needed
         python-version: ["3.11"]
+        test-suite: ["metrics", "traces", "logs", "integration"]
       fail-fast: false
     
     env:
       DOCKER_BUILDKIT: 1
       COMPOSE_DOCKER_CLI_BUILD: 1
+      BUILDX_NO_DEFAULT_LOAD: false
     
     steps:
     - name: Checkout repository
@@ -59,12 +60,21 @@ jobs:
       uses: docker/setup-buildx-action@v3
       
     - name: Cache Docker layers
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: /tmp/.buildx-cache
-        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        key: ${{ runner.os }}-buildx-e2e-${{ github.sha }}
         restore-keys: |
+          ${{ runner.os }}-buildx-e2e-
           ${{ runner.os }}-buildx-
+
+    - name: Cache Python dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('tests/e2e/requirements-e2e.txt', 'requirements-dev.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
           
     - name: Free up disk space
       run: |
@@ -183,6 +193,35 @@ jobs:
         # Check that we have some metrics
         curl -s "http://localhost:9090/api/v1/query?query=up" | jq '.data.result | length' || true
     
+    - name: Determine test pattern for matrix
+      id: test-pattern
+      run: |
+        case "${{ matrix.test-suite }}" in
+          "metrics")
+            PATTERN="test_metrics or TestMetrics"
+            ;;
+          "traces")
+            PATTERN="test_trac or TestTracing"
+            ;;
+          "logs")
+            PATTERN="test_log or TestLogs"
+            ;;
+          "integration")
+            PATTERN="TestObservabilityIntegration or TestDashboard"
+            ;;
+          *)
+            PATTERN=""
+            ;;
+        esac
+        
+        # Override with manual pattern if provided
+        if [ -n "${{ github.event.inputs.test_pattern }}" ]; then
+          PATTERN="${{ github.event.inputs.test_pattern }}"
+        fi
+        
+        echo "pattern=$PATTERN" >> $GITHUB_OUTPUT
+        echo "Test pattern for ${{ matrix.test-suite }}: $PATTERN"
+
     - name: Run E2E observability tests
       env:
         TEST_INFERENCE_URL: http://localhost:8080
@@ -193,22 +232,34 @@ jobs:
         TEST_TIMEOUT: 300
         LOG_LEVEL: ${{ github.event.inputs.log_level || 'INFO' }}
         PYTHONPATH: ${{ github.workspace }}
+        PYTEST_WORKERS: "1"  # Avoid parallel conflicts with Docker resources
       run: |
-        # Set test pattern if provided
-        TEST_PATTERN="${{ github.event.inputs.test_pattern }}"
-        PYTEST_ARGS="tests/e2e/ -v --tb=short --maxfail=5"
+        TEST_PATTERN="${{ steps.test-pattern.outputs.pattern }}"
+        PYTEST_ARGS="tests/e2e/ -v --tb=short --maxfail=3 --disable-warnings"
         
         if [ -n "$TEST_PATTERN" ]; then
-          PYTEST_ARGS="$PYTEST_ARGS -k $TEST_PATTERN"
+          PYTEST_ARGS="$PYTEST_ARGS -k '$TEST_PATTERN'"
         fi
         
-        echo "Running tests with: pytest $PYTEST_ARGS"
+        # Add test result output
+        PYTEST_ARGS="$PYTEST_ARGS --junitxml=test-results-${{ matrix.test-suite }}.xml"
+        
+        echo "Running ${{ matrix.test-suite }} tests with: pytest $PYTEST_ARGS"
         
         # Run tests using the test runner container
         docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml run \
           --rm \
-          --name e2e-test-runner \
+          --name e2e-test-runner-${{ matrix.test-suite }} \
+          -e PYTEST_CURRENT_TEST \
           test-runner pytest $PYTEST_ARGS
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.test-suite }}
+        path: test-results-${{ matrix.test-suite }}.xml
+        retention-days: 7
     
     - name: Collect test artifacts on failure
       if: failure()
@@ -294,14 +345,134 @@ jobs:
         # Show remaining disk usage
         df -h
 
-  notify-on-failure:
-    needs: e2e-observability-tests
+  # Collect and summarize results from all test suites
+  collect-results:
+    name: Collect Test Results
     runs-on: ubuntu-latest
-    if: failure() && github.event_name == 'schedule'
+    needs: e2e-observability-tests
+    if: always()
+    
     steps:
-    - name: Notify on scheduled test failure
-      run: |
-        echo "Scheduled E2E observability tests failed."
-        echo "This indicates potential issues with the observability stack."
-        echo "Please check the test artifacts and investigate."
-        # Add notification logic here (Slack, email, etc.)
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: test-results/
+          merge-multiple: true
+
+      - name: Install test result parser
+        run: |
+          pip install junitparser
+
+      - name: Parse test results
+        run: |
+          python3 << 'EOF'
+          import xml.etree.ElementTree as ET
+          import glob
+          import json
+          
+          results = {}
+          total_tests = 0
+          total_failures = 0
+          total_errors = 0
+          
+          for xml_file in glob.glob('test-results/*.xml'):
+              try:
+                  tree = ET.parse(xml_file)
+                  root = tree.getroot()
+                  
+                  suite_name = xml_file.split('/')[-1].replace('test-results-', '').replace('.xml', '')
+                  tests = int(root.get('tests', 0))
+                  failures = int(root.get('failures', 0))
+                  errors = int(root.get('errors', 0))
+                  time = float(root.get('time', 0))
+                  
+                  results[suite_name] = {
+                      'tests': tests,
+                      'failures': failures,
+                      'errors': errors,
+                      'time': time,
+                      'success': failures == 0 and errors == 0
+                  }
+                  
+                  total_tests += tests
+                  total_failures += failures
+                  total_errors += errors
+                  
+              except Exception as e:
+                  print(f"Error parsing {xml_file}: {e}")
+          
+          # Generate summary
+          print(f"TOTAL_TESTS={total_tests}")
+          print(f"TOTAL_FAILURES={total_failures}")
+          print(f"TOTAL_ERRORS={total_errors}")
+          print(f"SUCCESS_RATE={((total_tests - total_failures - total_errors) / max(total_tests, 1)) * 100:.1f}")
+          
+          # Save detailed results
+          with open('summary.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          
+          EOF
+
+      - name: Generate test summary
+        run: |
+          # Read summary data
+          TOTAL_TESTS=$(python3 -c "import json; data=json.load(open('summary.json')); print(sum(r['tests'] for r in data.values()))")
+          TOTAL_FAILURES=$(python3 -c "import json; data=json.load(open('summary.json')); print(sum(r['failures'] for r in data.values()))")
+          TOTAL_ERRORS=$(python3 -c "import json; data=json.load(open('summary.json')); print(sum(r['errors'] for r in data.values()))")
+          SUCCESS_RATE=$(python3 -c "import json; data=json.load(open('summary.json')); total=sum(r['tests'] for r in data.values()); passed=total-sum(r['failures'] for r in data.values())-sum(r['errors'] for r in data.values()); print(f'{(passed/max(total,1)*100):.1f}')")
+          
+          echo "# E2E Observability Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Tests**: $TOTAL_TESTS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failures**: $TOTAL_FAILURES" >> $GITHUB_STEP_SUMMARY
+          echo "- **Errors**: $TOTAL_ERRORS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Success Rate**: $SUCCESS_RATE%" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Test Suite Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Suite | Tests | Failures | Errors | Duration | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|----------|--------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          python3 << 'EOF' >> $GITHUB_STEP_SUMMARY
+          import json
+          data = json.load(open('summary.json'))
+          for suite, results in data.items():
+              status = "✅" if results['success'] else "❌"
+              print(f"| {suite} | {results['tests']} | {results['failures']} | {results['errors']} | {results['time']:.1f}s | {status} |")
+          EOF
+
+      - name: Upload combined results
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-summary
+          path: |
+            summary.json
+            test-results/
+          retention-days: 14
+
+  # Notify on failure
+  notify-on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [e2e-observability-tests, collect-results]
+    if: failure() && (github.event_name == 'schedule' || github.event_name == 'push')
+    
+    steps:
+      - name: Create failure notification
+        run: |
+          echo "🚨 **E2E Observability Tests Failed**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Event**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Please check the test artifacts and logs for details." >> $GITHUB_STEP_SUMMARY
+          
+          # TODO: Add actual notification logic here
+          # - Slack webhook
+          # - Email notification
+          # - PagerDuty alert
+          echo "Notification logic would trigger here for production setup"

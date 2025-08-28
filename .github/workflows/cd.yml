@@ -1,23 +1,503 @@
-name: CD
+name: Continuous Deployment
+
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: 'Version to deploy (leave empty for latest)'
+        required: false
+        type: string
+      skip_tests:
+        description: 'Skip pre-deployment tests'
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - 'v*.*.*'
-jobs:
   release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  DOCKER_BUILDKIT: 1
+  HELM_VERSION: '3.13.0'
+
+concurrency:
+  group: cd-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  security-events: write
+  actions: read
+
+jobs:
+  # Extract version and validate inputs
+  setup:
+    name: Setup & Validation
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      environment: ${{ steps.environment.outputs.environment }}
+      image-tag: ${{ steps.version.outputs.image-tag }}
+      deploy-staging: ${{ steps.environment.outputs.deploy-staging }}
+      deploy-production: ${{ steps.environment.outputs.deploy-production }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Helm Lint
-        run: helm lint config/infra/helm/seraphim-inference
-      - name: Package Chart
-        run: helm package config/infra/helm/seraphim-inference -d dist
-      - name: Upload Artifact
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="main-$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA::8}"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "image-tag=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Deploying version: $VERSION"
+
+      - name: Determine environment
+        id: environment
+        run: |
+          if [[ "${{ github.event.inputs.environment }}" == "production" ]]; then
+            ENVIRONMENT="production"
+            DEPLOY_STAGING="false"
+            DEPLOY_PRODUCTION="true"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            ENVIRONMENT="production"
+            DEPLOY_STAGING="false"
+            DEPLOY_PRODUCTION="true"
+          else
+            ENVIRONMENT="staging"
+            DEPLOY_STAGING="true"
+            DEPLOY_PRODUCTION="false"
+          fi
+          
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "deploy-staging=$DEPLOY_STAGING" >> $GITHUB_OUTPUT
+          echo "deploy-production=$DEPLOY_PRODUCTION" >> $GITHUB_OUTPUT
+          echo "Target environment: $ENVIRONMENT"
+
+  # Pre-deployment security and quality checks
+  pre-deployment-checks:
+    name: Pre-deployment Checks
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event.inputs.skip_tests != 'true'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run critical tests
+        run: |
+          pytest tests/unit -k "not slow" --maxfail=3 -q
+
+      - name: Security scan dependencies
+        run: |
+          pip install safety
+          safety check --json --output safety-results.json || true
+
+      - name: Upload security results
         uses: actions/upload-artifact@v4
         with:
-          name: helm-chart
-          path: dist/*.tgz
+          name: pre-deployment-security-scan
+          path: safety-results.json
+          retention-days: 7
+
+  # Build and push container images
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [setup, pre-deployment-checks]
+    if: always() && (needs.pre-deployment-checks.result == 'success' || needs.pre-deployment-checks.result == 'skipped')
+    
+    strategy:
+      matrix:
+        service: [inference]
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ matrix.service }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ matrix.service }}-
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/seraphim-${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.setup.outputs.image-tag }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          build-args: |
+            VERSION=${{ needs.setup.outputs.version }}
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            VCS_REF=${{ github.sha }}
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/seraphim-${{ matrix.service }}:${{ needs.setup.outputs.image-tag }}
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.service }}.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results-${{ matrix.service }}.sarif'
+
+  # Package Helm charts
+  package-charts:
+    name: Package Helm Charts
+    runs-on: ubuntu-latest
+    needs: setup
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Lint Helm charts
+        run: |
+          find config/infra/helm -name 'Chart.yaml' -exec dirname {} \; | while read chart_dir; do
+            echo "Linting chart: $chart_dir"
+            helm lint "$chart_dir" --strict
+          done
+
+      - name: Package charts
+        run: |
+          mkdir -p dist/charts
+          find config/infra/helm -name 'Chart.yaml' -exec dirname {} \; | while read chart_dir; do
+            chart_name=$(basename "$chart_dir")
+            echo "Packaging chart: $chart_name"
+            helm package "$chart_dir" -d dist/charts --version ${{ needs.setup.outputs.version }}
+          done
+
+      - name: Upload chart artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-charts
+          path: dist/charts/*.tgz
+          retention-days: 90
+
+      - name: Publish charts to GitHub Packages
+        env:
+          HELM_EXPERIMENTAL_OCI: 1
+        run: |
+          echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+          
+          for chart in dist/charts/*.tgz; do
+            chart_name=$(basename "$chart" .tgz | sed 's/-[0-9].*//')
+            echo "Publishing chart: $chart_name"
+            helm push "$chart" oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          done
+
+  # Deploy to staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [setup, build-and-push, package-charts]
+    if: needs.setup.outputs.deploy-staging == 'true'
+    environment:
+      name: staging
+      url: https://staging.seraphim.example.com
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG_STAGING }}
+          context: staging
+
+      - name: Download chart artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-charts
+          path: charts/
+
+      - name: Deploy to staging
+        run: |
+          helm upgrade --install seraphim-inference \
+            charts/seraphim-inference-${{ needs.setup.outputs.version }}.tgz \
+            --namespace seraphim-staging \
+            --create-namespace \
+            --values config/infra/helm/seraphim-inference/values-staging.yaml \
+            --set image.tag=${{ needs.setup.outputs.image-tag }} \
+            --set ingress.host=staging.seraphim.example.com \
+            --wait --timeout=10m
+
+      - name: Run smoke tests
+        run: |
+          # Wait for deployment to be ready
+          kubectl wait --namespace seraphim-staging \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/name=seraphim-inference \
+            --timeout=300s
+          
+          # Run basic health check
+          kubectl run --namespace seraphim-staging smoke-test \
+            --image=curlimages/curl:8.4.0 --rm -i --restart=Never \
+            -- curl -f http://seraphim-inference.seraphim-staging.svc.cluster.local:8080/health
+
+      - name: Run integration tests
+        run: |
+          # Run integration tests against staging environment
+          export TEST_BASE_URL="https://staging.seraphim.example.com"
+          pytest tests/integration -v --tb=short
+        continue-on-error: true
+
+  # Deploy to production (requires approval)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [setup, build-and-push, package-charts, deploy-staging]
+    if: always() && needs.setup.outputs.deploy-production == 'true' && (needs.deploy-staging.result == 'success' || needs.deploy-staging.result == 'skipped')
+    environment:
+      name: production
+      url: https://seraphim.example.com
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG_PRODUCTION }}
+          context: production
+
+      - name: Download chart artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-charts
+          path: charts/
+
+      - name: Create backup
+        run: |
+          # Create backup of current deployment
+          kubectl get deployment seraphim-inference -n seraphim-production -o yaml > backup-deployment.yaml || true
+          kubectl get configmap seraphim-config -n seraphim-production -o yaml > backup-configmap.yaml || true
+
+      - name: Deploy to production
+        run: |
+          helm upgrade --install seraphim-inference \
+            charts/seraphim-inference-${{ needs.setup.outputs.version }}.tgz \
+            --namespace seraphim-production \
+            --create-namespace \
+            --values config/infra/helm/seraphim-inference/values-production.yaml \
+            --set image.tag=${{ needs.setup.outputs.image-tag }} \
+            --set ingress.host=seraphim.example.com \
+            --wait --timeout=15m
+
+      - name: Verify deployment
+        run: |
+          # Wait for rollout to complete
+          kubectl rollout status deployment/seraphim-inference -n seraphim-production --timeout=600s
+          
+          # Run health checks
+          kubectl wait --namespace seraphim-production \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/name=seraphim-inference \
+            --timeout=300s
+          
+          # Test service endpoint
+          kubectl run --namespace seraphim-production production-health-check \
+            --image=curlimages/curl:8.4.0 --rm -i --restart=Never \
+            -- curl -f http://seraphim-inference.seraphim-production.svc.cluster.local:8080/health
+
+      - name: Upload backup artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-backup-${{ needs.setup.outputs.version }}
+          path: |
+            backup-deployment.yaml
+            backup-configmap.yaml
+          retention-days: 30
+
+  # Post-deployment verification
+  post-deployment:
+    name: Post-deployment Verification
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-staging, deploy-production]
+    if: always() && (needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success')
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pytest
+
+      - name: Run post-deployment tests
+        run: |
+          if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+            export TEST_BASE_URL="https://seraphim.example.com"
+          else
+            export TEST_BASE_URL="https://staging.seraphim.example.com"
+          fi
+          
+          # Run basic API tests
+          python -c "
+          import requests
+          import sys
+          
+          base_url = '$TEST_BASE_URL'
+          
+          # Health check
+          resp = requests.get(f'{base_url}/health', timeout=10)
+          print(f'Health check: {resp.status_code}')
+          assert resp.status_code == 200
+          
+          # Metrics endpoint
+          resp = requests.get(f'{base_url}/metrics', timeout=10)
+          print(f'Metrics endpoint: {resp.status_code}')
+          assert resp.status_code == 200
+          
+          print('All post-deployment checks passed!')
+          "
+
+      - name: Create deployment summary
+        run: |
+          echo "# Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ needs.setup.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: ${{ needs.setup.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Staging**: ${{ needs.deploy-staging.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Production**: ${{ needs.deploy-production.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Quick Links" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+            echo "- [Production Service](https://seraphim.example.com)" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ "${{ needs.deploy-staging.result }}" == "success" ]]; then
+            echo "- [Staging Service](https://staging.seraphim.example.com)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Rollback job (manual trigger)
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name == 'workflow_dispatch'
+    needs: [setup, deploy-production]
+    environment:
+      name: production
+    
+    steps:
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG_PRODUCTION }}
+          context: production
+
+      - name: Rollback deployment
+        run: |
+          echo "Rolling back production deployment..."
+          kubectl rollout undo deployment/seraphim-inference -n seraphim-production
+          kubectl rollout status deployment/seraphim-inference -n seraphim-production --timeout=300s
+
+      - name: Verify rollback
+        run: |
+          kubectl wait --namespace seraphim-production \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/name=seraphim-inference \
+            --timeout=300s

@@ -1,0 +1,73 @@
+name: 'Setup Python Environment'
+description: 'Set up Python with caching and install dependencies'
+
+inputs:
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  cache-dependency-path:
+    description: 'Path to requirements files for cache key'
+    required: false
+    default: |
+      requirements-dev.txt
+      services/*/requirements.txt
+  install-dev-deps:
+    description: 'Install development dependencies'
+    required: false
+    default: 'true'
+  extra-deps:
+    description: 'Extra dependencies to install'
+    required: false
+    default: ''
+
+outputs:
+  python-version:
+    description: 'Python version that was set up'
+    value: ${{ steps.setup-python.outputs.python-version }}
+  cache-hit:
+    description: 'Whether there was a cache hit'
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python ${{ inputs.python-version }}
+      id: setup-python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: 'pip'
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+    - name: Cache pip dependencies
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ inputs.python-version }}-${{ hashFiles(inputs.cache-dependency-path) }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ inputs.python-version }}-
+          ${{ runner.os }}-pip-
+
+    - name: Upgrade pip
+      shell: bash
+      run: python -m pip install --upgrade pip
+
+    - name: Install development dependencies
+      if: inputs.install-dev-deps == 'true'
+      shell: bash
+      run: pip install -r requirements-dev.txt
+
+    - name: Install extra dependencies
+      if: inputs.extra-deps != ''
+      shell: bash
+      run: pip install ${{ inputs.extra-deps }}
+
+    - name: Display Python info
+      shell: bash
+      run: |
+        echo "Python version: $(python --version)"
+        echo "Pip version: $(pip --version)"
+        echo "Installed packages:"
+        pip list --format=freeze | head -10

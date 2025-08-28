@@ -1,0 +1,30 @@
+name: "Seraphim CodeQL Config"
+
+disable-default-queries: false
+
+queries:
+  - uses: security-extended
+  - uses: security-and-quality
+
+paths:
+  - services/
+  - tests/
+  - config/
+
+paths-ignore:
+  - "**/node_modules"
+  - "**/dist"
+  - "**/build"
+  - "**/*.min.js"
+  - "**/vendor"
+  - "**/__pycache__"
+  - "**/.pytest_cache"
+  - "**/venv"
+  - "**/env"
+
+# Python-specific configuration
+python:
+  setup-python-dependencies: true
+  requirements: 
+    - requirements-dev.txt
+    - services/*/requirements.txt

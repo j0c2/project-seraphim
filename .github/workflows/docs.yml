@@ -1,61 +1,309 @@
-name: Deploy Jekyll site to Pages
+name: Documentation
 
 on:
   push:
-    branches: [main] # Change 'main' to your default branch name if different
+    branches: [main, develop]
+    paths:
+      - 'docs/**'
+      - '*.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'docs/**'
+      - '*.md'
   workflow_dispatch:
+    inputs:
+      deploy_to_pages:
+        description: 'Deploy to GitHub Pages'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  RUBY_VERSION: '3.2'
+  NODE_VERSION: '20'
 
 permissions:
   contents: read
   pages: write
   id-token: write
+  pull-requests: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  # Detect changes and validate structure
+  validate:
+    name: Validate Documentation
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs
+    outputs:
+      docs-changed: ${{ steps.changes.outputs.docs }}
+      should-deploy: ${{ steps.deploy-check.outputs.should-deploy }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetch whole history for jekyll-last-modified-at plugin
+          fetch-depth: 0
+
+      - name: Check for changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            docs:
+              - 'docs/**'
+              - '*.md'
+              - '_config.yml'
+              - 'Gemfile*'
+
+      - name: Check deployment conditions
+        id: deploy-check
+        run: |
+          SHOULD_DEPLOY="false"
+          
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            SHOULD_DEPLOY="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.deploy_to_pages }}" == "true" ]]; then
+            SHOULD_DEPLOY="true"
+          fi
+          
+          echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+          echo "Will deploy to Pages: $SHOULD_DEPLOY"
+
+      - name: Validate markdown files
+        if: steps.changes.outputs.docs == 'true'
+        uses: DavidAnson/markdownlint-action@v1
+        with:
+          files: '**/*.md'
+          config: |
+            {
+              "MD013": false,
+              "MD033": false,
+              "MD041": false
+            }
+        continue-on-error: true
+
+  # Link checking
+  link-check:
+    name: Check Links
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.docs-changed == 'true'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'docs/package*.json'
+
+      - name: Install markdown-link-check
+        run: npm install -g markdown-link-check
+
+      - name: Check internal links
+        run: |
+          find . -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*" | \
+          xargs -I {} markdown-link-check {} --config .github/workflows/link-check-config.json
+        continue-on-error: true
+
+      - name: Check external links (sample)
+        run: |
+          # Check a few external links to avoid rate limiting
+          find docs -name "*.md" | head -5 | \
+          xargs -I {} markdown-link-check {} --config .github/workflows/link-check-config.json --alive
+        continue-on-error: true
+
+  # Build documentation
+  build:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.docs-changed == 'true' || needs.validate.outputs.should-deploy == 'true'
+    
+    defaults:
+      run:
+        working-directory: docs
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for last-modified dates
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.1'
-          bundler-cache: false
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+          working-directory: docs
 
-      - name: Setup Pages
+      - name: Setup Pages (if deploying)
         id: pages
+        if: needs.validate.outputs.should-deploy == 'true'
         uses: actions/configure-pages@v5
 
+      - name: Cache Jekyll build
+        uses: actions/cache@v4
+        with:
+          path: |
+            docs/.jekyll-cache
+            docs/_site
+          key: jekyll-${{ runner.os }}-${{ hashFiles('docs/Gemfile.lock') }}-${{ hashFiles('docs/**/*.md') }}
+          restore-keys: |
+            jekyll-${{ runner.os }}-${{ hashFiles('docs/Gemfile.lock') }}-
+            jekyll-${{ runner.os }}-
+
       - name: Install dependencies
-        run: bundle install
+        run: |
+          bundle config set --local deployment 'true'
+          bundle config set --local without 'development test'
+          bundle install --jobs=4 --retry=3
 
       - name: Build with Jekyll
-        run: bundle exec jekyll build --baseurl "${{ steps.pages.outputs.base_path }}"
+        run: |
+          if [[ "${{ needs.validate.outputs.should-deploy }}" == "true" ]]; then
+            BASEURL="${{ steps.pages.outputs.base_path }}"
+            ENV="production"
+          else
+            BASEURL=""
+            ENV="development"
+          fi
+          
+          bundle exec jekyll build --baseurl "$BASEURL" --verbose
         env:
-          JEKYLL_ENV: production
+          JEKYLL_ENV: ${{ needs.validate.outputs.should-deploy == 'true' && 'production' || 'development' }}
 
-      - name: Upload artifact
+      - name: Test generated site
+        run: |
+          # Basic tests on generated site
+          test -f _site/index.html || (echo "Missing index.html" && exit 1)
+          test -d _site/assets || (echo "Missing assets directory" && exit 1)
+          
+          # Count generated pages
+          page_count=$(find _site -name "*.html" | wc -l)
+          echo "Generated $page_count HTML pages"
+          
+          # Check for common issues
+          if grep -r "localhost:" _site/ 2>/dev/null; then
+            echo "Warning: Found localhost references in generated site"
+          fi
+
+      - name: Generate site statistics
+        run: |
+          echo "# Documentation Build Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Pages**: $(find _site -name '*.html' | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "- **CSS Files**: $(find _site -name '*.css' | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "- **JS Files**: $(find _site -name '*.js' | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Images**: $(find _site -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.gif' -o -name '*.svg' \) | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Time**: $(date)" >> $GITHUB_STEP_SUMMARY
+          
+          # Site size
+          SITE_SIZE=$(du -sh _site | cut -f1)
+          echo "- **Site Size**: $SITE_SIZE" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-site
+          path: docs/_site/
+          retention-days: 7
+
+      - name: Upload Pages artifact
+        if: needs.validate.outputs.should-deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/_site
 
+  # Deploy to GitHub Pages
   deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: [validate, build]
+    if: needs.validate.outputs.should-deploy == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
+    
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Update deployment status
+        run: |
+          echo "# Documentation Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Successfully deployed to GitHub Pages**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 **Site URL**: ${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "📅 **Deployed**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+  # Preview deployment for PRs
+  preview:
+    name: Preview Documentation
+    runs-on: ubuntu-latest
+    needs: [validate, build]
+    if: github.event_name == 'pull_request' && needs.validate.outputs.docs-changed == 'true'
+    
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation-site
+          path: site/
+
+      - name: Create preview comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo, number } = context.issue;
+            
+            const comment = `## 📖 Documentation Preview
+            
+            The documentation has been built successfully for this PR.
+            
+            ### Changes Detected
+            - Documentation files were modified
+            - Site built with ${await require('fs').promises.readdir('site').then(files => files.length)} files
+            
+            ### Next Steps
+            - Review the changes in the Files tab
+            - Merge to \`main\` to deploy to GitHub Pages
+            
+            ---
+            *This comment was automatically generated*`;
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: number
+            });
+            
+            const existingComment = comments.find(comment => 
+              comment.body.includes('📖 Documentation Preview')
+            );
+            
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existingComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: number,
+                body: comment
+              });
+            }
