@@ -41,7 +41,7 @@ e2e: dev-deps
 	$(PY) -m locust -f tests/e2e/locustfile.py --headless -u 10 -r 5 -H $(LOCUST_HOST) --only-summary || true
 
 e2e-local: dev-deps
-	@($(PY) -m uvicorn services.inference.app.main:app --host 127.0.0.1 --port 8080 >/tmp/seraphim_uvicorn.log 2>&1 & echo $$! > /tmp/seraphim_uvicorn.pid)
+	@(PYTHONPATH=$(PWD)/services:$(PWD):$(PYTHONPATH) $(PY) -m uvicorn services.inference.app.main:app --host ********* --port 8080 >/tmp/seraphim_uvicorn.log 2>&1 & echo $$! > /tmp/seraphim_uvicorn.pid)
 	@echo "Waiting for http://127.0.0.1:8080/healthz ..."
 	@bash -lc 'for i in {1..50}; do if curl -sf --max-time 0.3 http://127.0.0.1:8080/healthz >/dev/null; then echo READY; exit 0; fi; sleep 0.1; done; echo NOT READY; exit 1'
 	$(PY) -m locust -f tests/e2e/locustfile.py --headless -u 10 -r 5 -t 10s --only-summary --host http://127.0.0.1:8080
@@ -52,12 +52,12 @@ lint: dev-deps
 	flake8 services/ || true
 
 unit: dev-deps
-	$(PY) -m pytest -q tests/unit
+	PYTHONPATH=$(PWD)/services:$(PWD):$(PYTHONPATH) $(PY) -m pytest -q tests/unit
 
 test: unit
 
 run: dev-deps
-	$(PY) -m uvicorn services.inference.app.main:app --host ********* --port 8080
+	PYTHONPATH=$(PWD)/services:$(PWD):$(PYTHONPATH) $(PY) -m uvicorn services.inference.app.main:app --host ********* --port 8080
 
 # TorchServe targets
 TS_IMAGE ?= seraphim-model-server:dev
