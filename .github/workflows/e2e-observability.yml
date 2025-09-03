@@ -94,21 +94,17 @@ jobs:
     
     - name: Validate Docker Compose configuration
       run: |
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml config --quiet
+        docker-compose config --quiet
     
     - name: Build Docker images
       run: |
-        # Build inference service image
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml build inference
-        
-        # Build test runner image
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml build test-runner
+        # Build all services
+        docker-compose build
     
     - name: Start observability stack
       run: |
-        # Start all services except test-runner
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml up -d \
-          inference prometheus jaeger loki promtail grafana
+        # Start all services
+        docker-compose up -d
     
     - name: Wait for services to be healthy
       timeout-minutes: 10
@@ -122,7 +118,7 @@ jobs:
           local attempt=0
           
           while [ $attempt -lt $max_attempts ]; do
-            if docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps $service | grep -q "healthy"; then
+            if docker-compose ps $service | grep -q "Up"; then
               echo "✅ $service is healthy"
               return 0
             fi
@@ -133,7 +129,7 @@ jobs:
           done
           
           echo "❌ $service failed to become healthy"
-          docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml logs $service
+          docker-compose logs $service
           return 1
         }
         
@@ -148,7 +144,7 @@ jobs:
     
     - name: Show service status
       run: |
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps
+        docker-compose ps
         echo "Docker containers:"
         docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     
@@ -157,7 +153,7 @@ jobs:
         echo "Checking service endpoints..."
         
         # Check inference service
-        curl -f http://localhost:8080/health || (echo "Inference health check failed" && exit 1)
+        curl -f http://localhost:8088/healthz || (echo "Inference health check failed" && exit 1)
         echo "✅ Inference service is responding"
         
         # Check Prometheus
@@ -181,9 +177,9 @@ jobs:
         echo "Generating baseline data..."
         # Make a few requests to generate initial metrics/traces/logs
         for i in {1..5}; do
-          curl -X POST http://localhost:8080/predict \
+          curl -X POST http://localhost:8088/predict \
             -H "Content-Type: application/json" \
-            -d "{\"text\": \"Baseline test $i\", \"model\": \"primary\"}" || true
+            -d "{\"text\": \"Baseline test $i\"}" || true
           sleep 1
         done
         
@@ -224,7 +220,7 @@ jobs:
 
     - name: Run E2E observability tests
       env:
-        TEST_INFERENCE_URL: http://localhost:8080
+        TEST_INFERENCE_URL: http://localhost:8088
         TEST_PROMETHEUS_URL: http://localhost:9090
         TEST_JAEGER_URL: http://localhost:16686
         TEST_LOKI_URL: http://localhost:3100
@@ -246,12 +242,9 @@ jobs:
         
         echo "Running ${{ matrix.test-suite }} tests with: pytest $PYTEST_ARGS"
         
-        # Run tests using the test runner container
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml run \
-          --rm \
-          --name e2e-test-runner-${{ matrix.test-suite }} \
-          -e PYTEST_CURRENT_TEST \
-          test-runner pytest $PYTEST_ARGS
+        # Run tests directly with pytest
+        pip install -r requirements-dev.txt
+        pytest $PYTEST_ARGS
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
@@ -270,16 +263,16 @@ jobs:
         mkdir -p test-artifacts
         
         # Collect service logs
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml logs --no-color > test-artifacts/docker-compose-logs.txt 2>&1 || true
+        docker-compose logs --no-color > test-artifacts/docker-compose-logs.txt 2>&1 || true
         
         # Collect individual service logs
         for service in inference prometheus jaeger loki promtail grafana; do
           echo "Collecting logs for $service..."
-          docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml logs --no-color $service > test-artifacts/$service-logs.txt 2>&1 || true
+          docker-compose logs --no-color $service > test-artifacts/$service-logs.txt 2>&1 || true
         done
         
         # Collect service status
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps > test-artifacts/service-status.txt 2>&1 || true
+        docker-compose ps > test-artifacts/service-status.txt 2>&1 || true
         docker ps -a > test-artifacts/docker-ps.txt 2>&1 || true
         
         # Collect Prometheus targets and config
@@ -321,7 +314,7 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "## Service Status" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml ps >> $GITHUB_STEP_SUMMARY 2>&1 || true
+        docker-compose ps >> $GITHUB_STEP_SUMMARY 2>&1 || true
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -337,7 +330,7 @@ jobs:
         echo "Cleaning up..."
         
         # Stop and remove containers
-        docker-compose -f docker-compose.yml -f tests/e2e/docker-compose.test.yml down -v --remove-orphans || true
+        docker-compose down -v --remove-orphans || true
         
         # Clean up test images and containers
         docker system prune -f || true

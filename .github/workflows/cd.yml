@@ -319,7 +319,7 @@ jobs:
           # Run basic health check
           kubectl run --namespace seraphim-staging smoke-test \
             --image=curlimages/curl:8.4.0 --rm -i --restart=Never \
-            -- curl -f http://seraphim-inference.seraphim-staging.svc.cluster.local:8080/health
+            -- curl -f http://seraphim-inference.seraphim-staging.svc.cluster.local:8080/healthz
 
       - name: Run integration tests
         run: |
@@ -391,7 +391,7 @@ jobs:
           # Test service endpoint
           kubectl run --namespace seraphim-production production-health-check \
             --image=curlimages/curl:8.4.0 --rm -i --restart=Never \
-            -- curl -f http://seraphim-inference.seraphim-production.svc.cluster.local:8080/health
+            -- curl -f http://seraphim-inference.seraphim-production.svc.cluster.local:8080/healthz
 
       - name: Upload backup artifacts
         uses: actions/upload-artifact@v4
@@ -441,7 +441,7 @@ jobs:
           base_url = '$TEST_BASE_URL'
           
           # Health check
-          resp = requests.get(f'{base_url}/health', timeout=10)
+          resp = requests.get(f'{base_url}/healthz', timeout=10)
           print(f'Health check: {resp.status_code}')
           assert resp.status_code == 200
           
