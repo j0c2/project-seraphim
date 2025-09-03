@@ -153,15 +153,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          cd services/inference
           pip install -r requirements-dev.txt
 
       - name: Create test results directory
         run: mkdir -p test-results
 
       - name: Run unit tests with coverage
+        env:
+          PYTHONPATH: ${{ github.workspace }}/services:${{ github.workspace }}:${{ github.workspace }}/services/inference
         run: |
+          cd services/inference
           pytest tests/unit \
-            --cov=services \
+            --cov=src \
             --cov-report=xml:test-results/coverage.xml \
             --cov-report=html:test-results/htmlcov \
             --cov-report=term-missing \
@@ -326,6 +330,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          cd services/inference
           pip install -r requirements-dev.txt
 
       - name: Download Docker image
